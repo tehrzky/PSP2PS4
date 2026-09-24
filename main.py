@@ -827,14 +827,16 @@ class PSP2PS4App(ctk.CTk):
 
     # ---------------------------------------------------------- build state
     def set_build_state(self, active: bool, phase: str = ""):
-        """Toggle the build button between idle and busy state."""
+        """Toggle build button appearance without using state=disabled."""
+        self._building = getattr(self, "_building", False)
+        self._building = active
         try:
             if active:
                 txt = "⏳  BUILDING…" + (f"  {phase}" if phase else "")
                 self.build_btn.configure(
                     text=txt,
-                    state="disabled",
                     fg_color=SURFACE_3,
+                    hover_color=SURFACE_3,
                     text_color=TEXT_DIM)
             else:
                 mode = "Game PKG"
@@ -847,12 +849,11 @@ class PSP2PS4App(ctk.CTk):
                        else "🔨   BUILD EMULATOR PKG")
                 self.build_btn.configure(
                     text=txt,
-                    state="normal",
                     fg_color=ACCENT,
+                    hover_color=ACCENT_HI,
                     text_color=ACCENT_ON)
         except Exception as e:
             print(f"set_build_state error: {e}", flush=True)
-        # Force a UI refresh so the button visibly changes
         try:
             self.update_idletasks()
         except Exception:
