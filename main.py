@@ -827,7 +827,7 @@ class PSP2PS4App(ctk.CTk):
             pass
 
     # ---------------------------------------------------------- build state
-        def set_build_state(self, active: bool, phase: str = ""):
+    def set_build_state(self, active: bool, phase: str = ""):
         """Change button appearance. NEVER sets state=disabled."""
         try:
             if active:
