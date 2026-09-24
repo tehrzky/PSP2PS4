@@ -173,6 +173,7 @@ def rmtree(p):
 
 
 def safe_name(s: str) -> str:
+    s = s.replace("\x00", "")   # ← add this
     return "".join(c for c in s if c not in r'<>:"/\|?*').strip()
 
 
