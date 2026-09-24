@@ -162,7 +162,7 @@ class PSP2PS4App(ctk.CTk):
         self.pages[name].grid(row=0, column=0, sticky="nsew")
 
     # ---------- Create Page ----------
-        def _create_create_page(self):
+    def _create_create_page(self):
         page = ctk.CTkScrollableFrame(self.content, corner_radius=0)
         self.pages["create"] = page
         # NO .grid_columnconfigure here
