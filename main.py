@@ -827,22 +827,21 @@ class PSP2PS4App(ctk.CTk):
             pass
 
     # ---------------------------------------------------------- build state
-    def set_build_state(self, active: bool, phase: str = ""):
-        """Toggle build button appearance without using state=disabled."""
-        self._building = getattr(self, "_building", False)
-        self._building = active
+        def set_build_state(self, active: bool, phase: str = ""):
+        """Change button appearance. NEVER sets state=disabled."""
         try:
             if active:
                 txt = "⏳  BUILDING…" + (f"  {phase}" if phase else "")
                 self.build_btn.configure(
                     text=txt,
                     fg_color=SURFACE_3,
-                    hover_color=SURFACE_3,
                     text_color=TEXT_DIM)
+                self._building = True
+                print(f"[state] building=True phase={phase}", flush=True)
             else:
                 mode = "Game PKG"
                 try:
-                    mode = self.pages["game"].mode_var.get()
+                    mode = self.mode_var.get()
                 except Exception:
                     pass
                 txt = ("🚀   BUILD PKG"
@@ -851,14 +850,13 @@ class PSP2PS4App(ctk.CTk):
                 self.build_btn.configure(
                     text=txt,
                     fg_color=ACCENT,
-                    hover_color=ACCENT_HI,
                     text_color=ACCENT_ON)
+                self._building = False
+                print("[state] building=False", flush=True)
         except Exception as e:
-            print(f"set_build_state error: {e}", flush=True)
-        try:
-            self.update_idletasks()
-        except Exception:
-            pass
+            print(f"[state] ERROR: {e}", flush=True)
+            # Failsafe: always clear the flag
+            self._building = False
 
     # ---------------------------------------------------------- dialogs
     def ask_main(self, prompt, title="Input", integer=False,
@@ -921,6 +919,7 @@ class PSP2PS4App(ctk.CTk):
         if not messagebox.askyesno(
                 "Cleanup", "Delete tools/image0 and temp files?"):
             return
+        self._building = False
         C.rmtree(C.IMAGE0_DIR)
         for f in (C.TOOLS_DIR / "image0.gp4",
                   C.TOOLS_DIR / "image0.txt",
@@ -1056,6 +1055,7 @@ class PSP2PS4App(ctk.CTk):
         if getattr(self, "_building", False):
             self.log("[build] already running, ignoring click")
             return
+          
 
         gp = self.pages["game"]
         self.log(f"[build] clicked — mode={gp.mode_var.get()} "
