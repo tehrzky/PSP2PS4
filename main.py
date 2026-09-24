@@ -1004,7 +1004,6 @@ class PSP2PS4App(ctk.CTk):
             messagebox.showwarning("No base",
                                    "Select a PKG from the list first.")
             return
-        # If this exact base is already extracted, just open the folder.
         name = gp.base_pkg_path.stem
         if C.image0_looks_valid() and C.current_extracted_base() == name:
             self.log(f"[preview] {name} already extracted — opening folder")
@@ -1012,6 +1011,16 @@ class PSP2PS4App(ctk.CTk):
             return
         threading.Thread(target=self._extract_thread,
                          args=(gp.base_pkg_path, True),
+                         daemon=True).start()
+
+    def force_extract_base(self):
+        gp = self.pages["game"]
+        if not gp.base_pkg_path or not gp.base_pkg_path.exists():
+            messagebox.showwarning("No base",
+                                   "Select a PKG from the list first.")
+            return
+        threading.Thread(target=self._extract_thread,
+                         args=(gp.base_pkg_path, False),
                          daemon=True).start()
 
     def _extract_thread(self, pkg: Path, open_after: bool):
