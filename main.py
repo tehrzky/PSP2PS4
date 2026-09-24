@@ -1041,14 +1041,23 @@ class PSP2PS4App(ctk.CTk):
     # ---------------------------------------------------------- build
     def do_build(self):
         gp = self.pages["game"]
+        print(f"=== do_build called ===", flush=True)
+        print(f"    mode      = {gp.mode_var.get()!r}", flush=True)
+        print(f"    base_pkg  = {gp.base_pkg_path}", flush=True)
+        print(f"    iso_file  = {self.iso_file}", flush=True)
+        self.log(f"[build] clicked — mode={gp.mode_var.get()}")
+
         if gp.base_pkg_path is None:
+            self.log("❌ no base selected")
             messagebox.showerror("No base", "Select a base PKG first.")
             return
 
         if gp.mode_var.get() == "Game PKG":
             if not self.iso_file or not self.iso_file.exists():
+                self.log("❌ no ISO selected")
                 messagebox.showerror("No ISO", "Pick a game ISO first.")
                 return
+            self.log("[build] starting game build thread")
             threading.Thread(target=self._build_game_thread,
                              daemon=True).start()
         else:
