@@ -32,13 +32,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Build EXE with PyInstaller
-        run: |
-          pyinstaller --noconfirm --clean ^
-            --onefile ^
-            --windowed ^
-            --name "PSP2PS4_GUI" ^
-            --collect-all customtkinter ^
-            main.py
+        run: pyinstaller --noconfirm --clean --onefile --windowed --name "PSP2PS4_GUI" --collect-all customtkinter main.py
 
       - name: Show output
         run: dir dist
