@@ -344,4 +344,980 @@ def finish_pkg(out_name: str, disc_id: str, title: str, log):
     tmp_pkg.rename(final)
 
     size_mb = final.stat().st_size // (1024 * 1024)
-    (C.OUTPUT_DIR / f"[{disc_id}] {title} ({size_mb}mb
+    (C.OUTPUT_DIR / f"[{disc_id}] {title} ({size_mb}mb).txt")\
+        .write_text("", encoding="utf-8")
+    try:
+        gp4.unlink()
+    except Exception:
+        pass
+
+    log(f"✅ PKG created: {final.name}  ({size_mb} MB)")
+    return final
+
+
+# ============================================================================
+# GamePage
+# ============================================================================
+class GamePage(ctk.CTkFrame):
+    def __init__(self, parent, app):
+        super().__init__(parent, corner_radius=0, fg_color=BG)
+        self.app = app
+        self.schema = app.schema
+
+        self.base_pkg_path = None
+        self.base_pkg_name = ""
+
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_columnconfigure(1, weight=0, minsize=308)
+
+        self._build()
+
+    def _build(self):
+        mode_row = ctk.CTkFrame(self, fg_color="transparent", height=44)
+        mode_row.grid(row=0, column=0, columnspan=2, sticky="new",
+                      padx=16, pady=(12, 0))
+        mode_row.grid_propagate(False)
+        self.mode_var = tk.StringVar(value="Game PKG")
+        ctk.CTkSegmentedButton(
+            mode_row,
+            values=["Game PKG", "Emulator PKG"],
+            variable=self.mode_var,
+            command=lambda v: self._on_mode_change(),
+            height=36, corner_radius=10,
+            fg_color=SURFACE_2, selected_color=SELECT,
+            selected_hover_color=SELECT, unselected_color=SURFACE_2,
+            unselected_hover_color=SURFACE_3, text_color=TEXT)\
+            .pack(side="left")
+
+        left = ctk.CTkScrollableFrame(
+            self, corner_radius=0, fg_color=BG,
+            scrollbar_button_color=BORDER,
+            scrollbar_button_hover_color=BORDER_LT)
+        left.grid(row=0, column=0, sticky="nsew",
+                  padx=(16, 8), pady=(64, 12))
+        left.grid_columnconfigure(0, weight=1)
+
+        # Card 1
+        c1 = Card(left, "1", "Base PKG", "emulator base for the build")
+        c1.grid(row=0, column=0, sticky="ew", pady=(0, 12))
+        toolbar = ctk.CTkFrame(c1.body, fg_color="transparent")
+        toolbar.pack(fill="x", pady=(2, 8))
+        ghost(toolbar, "📂 base_pkgs/",
+              lambda: self.app.open_folder(C.BASE_PKGS_DIR), width=128)\
+            .pack(side="left", padx=(0, 6))
+        ghost(toolbar, "📂 official_pkgs/",
+              lambda: self.app.open_folder(C.OFFICIAL_DIR), width=142)\
+            .pack(side="left", padx=(0, 6))
+        ctk.CTkButton(toolbar, text="↻ Rescan", width=92, height=32,
+                      corner_radius=RADIUS_SM,
+                      fg_color=SURFACE_3, hover_color=BORDER_LT,
+                      text_color=TEXT, font=F(12),
+                      command=self.app.rescan_pkgs)\
+            .pack(side="right")
+
+        self.pkg_list = PkgList(c1.body, on_select=self._on_pkg_select,
+                                height=196)
+        self.pkg_list.pack(fill="x", pady=(0, 10))
+
+        btn_row = ctk.CTkFrame(c1.body, fg_color="transparent")
+        btn_row.pack(fill="x")
+        ghost(btn_row, "🔍 Preview base", self.app.preview_base, width=138)\
+            .pack(side="left", padx=(0, 8))
+        ctk.CTkButton(btn_row, text="⬇  Extract Base PKG",
+                      width=168, height=34,
+                      corner_radius=RADIUS_SM, font=F(12, "bold"),
+                      fg_color=SELECT, hover_color=BORDER_LT,
+                      text_color=ACCENT_HI,
+                      command=self.app.force_extract_base)\
+            .pack(side="left")
+
+        # Card 2
+        c2 = Card(left, "2", "Overrides", "optional")
+        c2.grid(row=1, column=0, sticky="ew", pady=(0, 12))
+        self.use_overrides = tk.BooleanVar(value=False)
+        row2 = ctk.CTkFrame(c2.body, fg_color="transparent")
+        row2.pack(fill="x")
+        ctk.CTkCheckBox(row2,
+                        text="Copy files from overrides/ into the base",
+                        variable=self.use_overrides, font=F(12),
+                        fg_color=ACCENT, hover_color=ACCENT_HI)\
+            .pack(side="left")
+        ghost(row2, "📂 Open",
+              lambda: self.app.open_folder(C.OVERRIDES_DIR), width=84)\
+            .pack(side="right")
+
+        # Card 3
+        self.c3 = Card(left, "3", "Game ISO", "your PSP game image")
+        self.c3.grid(row=2, column=0, sticky="ew", pady=(0, 12))
+        self.iso_label = ctk.CTkLabel(self.c3.body, text="No ISO selected",
+                                      font=F(12), text_color=DANGER,
+                                      anchor="w")
+        self.iso_label.pack(anchor="w", pady=(2, 8))
+        row3 = ctk.CTkFrame(self.c3.body, fg_color="transparent")
+        row3.pack(fill="x")
+        ctk.CTkButton(row3, text="Browse ISO…", width=140, height=34,
+                      corner_radius=RADIUS_SM, font=F(12, "bold"),
+                      fg_color=SURFACE_3, hover_color=BORDER_LT,
+                      text_color=TEXT, command=self.app.pick_iso)\
+            .pack(side="left")
+        ghost(row3, "📂 game_dlc/",
+              lambda: self.app.open_folder(C.DLC_DIR), width=126)\
+            .pack(side="right")
+        self.output_preview = ctk.CTkLabel(self.c3.body, text="",
+                                           font=F(11, family=FONT_MONO),
+                                           text_color=SUCCESS, anchor="w")
+        self.output_preview.pack(anchor="w", pady=(10, 0))
+
+        # Card 4
+        self.c4 = Card(left, "4", "Decrypt Method")
+        self.c4.grid(row=3, column=0, sticky="ew", pady=(0, 12))
+        self.decrypt_var = tk.IntVar(value=1)
+        for txt, val in (
+            ("Decrypt & rebuild ISO — safest", 1),
+            ("Swap EBOOT — fallback if decrypt fails", 2),
+            ("Skip — assume already decrypted (fast, may not work)", 3),
+        ):
+            ctk.CTkRadioButton(self.c4.body, text=txt,
+                               variable=self.decrypt_var, value=val,
+                               font=F(12), fg_color=ACCENT,
+                               hover_color=ACCENT_HI)\
+                .pack(anchor="w", pady=3)
+
+        # Card 5
+        self.c5 = Card(left, "5", "Emulator Options",
+                       "from emulator_options.json")
+        self.c5.grid(row=4, column=0, sticky="ew", pady=(0, 12))
+        self.schema_form = SchemaForm(self.c5.body, self.schema)
+
+        # Card 6
+        self.c6 = Card(left, "6", "Icon / Background", "optional")
+        self.c6.grid(row=5, column=0, sticky="ew")
+        self.icon_var = tk.IntVar(value=2)
+        ctk.CTkRadioButton(self.c6.body, text="Use default icons",
+                           variable=self.icon_var, value=2, font=F(12),
+                           fg_color=ACCENT, hover_color=ACCENT_HI)\
+            .pack(anchor="w", pady=3)
+        ctk.CTkLabel(self.c6.body,
+                     text="tools/pic/icon0.png · pic1.png · save_data.png",
+                     font=F(10), text_color=TEXT_FAINT, anchor="w")\
+            .pack(anchor="w", padx=26)
+        ctk.CTkRadioButton(self.c6.body, text="Set custom icon / background",
+                           variable=self.icon_var, value=1, font=F(12),
+                           fg_color=ACCENT, hover_color=ACCENT_HI)\
+            .pack(anchor="w", pady=(8, 3))
+
+        row6 = ctk.CTkFrame(self.c6.body, fg_color="transparent")
+        row6.pack(fill="x", padx=26, pady=2)
+        ctk.CTkButton(row6, text="Choose Icon…", width=140, height=32,
+                      corner_radius=RADIUS_SM, font=F(12),
+                      fg_color=SURFACE_3, hover_color=BORDER_LT,
+                      text_color=TEXT, command=self.app.pick_icon)\
+            .pack(side="left", padx=(0, 10))
+        self.icon_label = ctk.CTkLabel(row6, text="(none)", font=F(11),
+                                       text_color=TEXT_FAINT, anchor="w")
+        self.icon_label.pack(side="left")
+
+        row6b = ctk.CTkFrame(self.c6.body, fg_color="transparent")
+        row6b.pack(fill="x", padx=26, pady=2)
+        ctk.CTkButton(row6b, text="Choose Boot Image…", width=160, height=32,
+                      corner_radius=RADIUS_SM, font=F(12),
+                      fg_color=SURFACE_3, hover_color=BORDER_LT,
+                      text_color=TEXT, command=self.app.pick_boot)\
+            .pack(side="left", padx=(0, 10))
+        self.boot_label = ctk.CTkLabel(row6b, text="(none)", font=F(11),
+                                       text_color=TEXT_FAINT, anchor="w")
+        self.boot_label.pack(side="left")
+
+        # --- RIGHT: summary rail ---
+        right = ctk.CTkFrame(self, fg_color=SURFACE, corner_radius=RADIUS,
+                             border_width=1, border_color=BORDER,
+                             width=308)
+        right.grid(row=0, column=1, sticky="nsew",
+                   padx=(8, 16), pady=(64, 12))
+        right.grid_propagate(False)
+        right.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(right, text="BUILD SUMMARY", font=F(10, "bold"),
+                     text_color=TEXT_FAINT, anchor="w")\
+            .grid(row=0, column=0, sticky="ew", padx=16, pady=(16, 8))
+
+        self.progress = ctk.CTkProgressBar(right, height=8,
+                                           progress_color=ACCENT,
+                                           fg_color=SURFACE_3,
+                                           corner_radius=6)
+        self.progress.grid(row=1, column=0, sticky="ew", padx=16)
+        self.progress.set(0)
+        self.phase_label = ctk.CTkLabel(right, text="Idle", font=F(11),
+                                        text_color=TEXT_DIM, anchor="w")
+        self.phase_label.grid(row=2, column=0, sticky="ew",
+                              padx=16, pady=(6, 0))
+
+        sep = ctk.CTkFrame(right, fg_color=BORDER, height=1)
+        sep.grid(row=3, column=0, sticky="ew", padx=16, pady=(14, 12))
+
+        def kv(parent, row, k):
+            ctk.CTkLabel(parent, text=k, font=F(10), text_color=TEXT_FAINT,
+                         anchor="w").grid(row=row, column=0, sticky="nw",
+                                          padx=(16, 8), pady=3)
+            lbl = ctk.CTkLabel(parent, text="—", font=F(11), anchor="w",
+                               wraplength=200, justify="left")
+            lbl.grid(row=row, column=1, sticky="w", padx=(0, 16), pady=3)
+            return lbl
+
+        right.grid_columnconfigure(1, weight=1)
+        self.status_base = kv(right, 4, "BASE")
+        self.status_iso = kv(right, 5, "ISO")
+        self.status_out = kv(right, 6, "OUTPUT")
+
+        sep2 = ctk.CTkFrame(right, fg_color=BORDER, height=1)
+        sep2.grid(row=7, column=0, columnspan=2, sticky="ew",
+                  padx=16, pady=(12, 12))
+
+        ctk.CTkLabel(right, text="QUICK OPEN", font=F(10, "bold"),
+                     text_color=TEXT_FAINT, anchor="w")\
+            .grid(row=8, column=0, columnspan=2, sticky="ew",
+                  padx=16, pady=(0, 8))
+
+        grid_btns = ctk.CTkFrame(right, fg_color="transparent")
+        grid_btns.grid(row=9, column=0, columnspan=2, sticky="ew",
+                       padx=16, pady=(0, 16))
+        grid_btns.grid_columnconfigure((0, 1), weight=1)
+        quick = [("📦 output", C.OUTPUT_DIR),
+                 ("🧱 base_pkgs", C.BASE_PKGS_DIR),
+                 ("🏛 official", C.OFFICIAL_DIR),
+                 ("🔧 overrides", C.OVERRIDES_DIR),
+                 ("🎴 game_dlc", C.DLC_DIR),
+                 ("🗂 image0", C.IMAGE0_DIR)]
+        for i, (label, path) in enumerate(quick):
+            ghost(grid_btns, label,
+                  lambda p=path: self.app.open_folder(p), height=34)\
+                .grid(row=i // 2, column=i % 2, sticky="ew",
+                      padx=(0, 6) if i % 2 == 0 else (6, 0), pady=3)
+
+    def set_items(self, items):
+        self.pkg_list.set_items(items)
+
+    def _on_pkg_select(self, item):
+        self.base_pkg_path = item["path"]
+        self.base_pkg_name = item["name"]
+        self.status_base.configure(text=item["name"])
+        self.app._update_output_preview()
+
+    def _on_mode_change(self):
+        is_game = self.mode_var.get() == "Game PKG"
+        for c in (self.c3, self.c4, self.c5, self.c6):
+            c.grid() if is_game else c.grid_remove()
+        self.app.build_btn.configure(
+            text="🚀   BUILD PKG" if is_game
+            else "🔨   BUILD EMULATOR PKG")
+        self.app._update_output_preview()
+
+    def set_output_preview(self, txt):
+        self.output_preview.configure(text=f"→ {txt}")
+        self.status_out.configure(text=txt)
+
+
+# ============================================================================
+# ManualPage
+# ============================================================================
+class ManualPage(ctk.CTkFrame):
+    def __init__(self, parent, app):
+        super().__init__(parent, corner_radius=0, fg_color=BG)
+        self.app = app
+
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+
+        toolbar = ctk.CTkFrame(self, fg_color="transparent")
+        toolbar.grid(row=0, column=0, sticky="ew", padx=20, pady=(16, 10))
+        ctk.CTkLabel(toolbar, text="Manual PKG Builder",
+                     font=F(18, "bold")).pack(side="left")
+        ctk.CTkLabel(toolbar,
+                     text="Advanced — put anything in tools/image0/, then build.",
+                     font=F(11), text_color=TEXT_DIM)\
+            .pack(side="left", padx=(14, 0), pady=(4, 0))
+        ghost(toolbar, "📂 Open tools/image0/",
+              lambda: self.app.open_folder(C.IMAGE0_DIR),
+              width=160, height=36).pack(side="right", padx=6)
+        ctk.CTkButton(toolbar, text="🚀  Build manual.pkg",
+                      width=190, height=36,
+                      corner_radius=RADIUS_SM, font=F(12, "bold"),
+                      fg_color=ACCENT, hover_color=ACCENT_HI,
+                      text_color=ACCENT_ON,
+                      command=self.app.do_manual_build)\
+            .pack(side="right")
+
+        self.manual_log = ctk.CTkTextbox(self, wrap="word",
+                                         font=F(11, family=FONT_MONO),
+                                         fg_color=SIDEBAR,
+                                         text_color="#b9c8b9",
+                                         corner_radius=RADIUS)
+        self.manual_log.grid(row=1, column=0, sticky="nsew",
+                             padx=20, pady=(0, 16))
+        self.manual_log.configure(state="disabled")
+
+
+# ============================================================================
+# Main app
+# ============================================================================
+class PSP2PS4App(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+        self.title("PSP 2 PS4 AIO")
+        self.configure(fg_color=BG)
+        C.ensure_folders()
+
+        self.iso_file = None
+        self.icon_file = None
+        self.boot_file = None
+        self.detected_disc_id = ""
+        self.detected_title = ""
+        self.schema = load_schema()
+        self.log_collapsed = False
+        self.nav_buttons = {}
+
+        self._build_ui()
+        self._apply_window_size()
+
+        self.log(f"[init] base_dir = {C.BASE_DIR}")
+        self.log(f"[init] tools    = {C.TOOLS_DIR}")
+
+        C.migrate_old_folders(log=self.log)
+        self.rescan_pkgs()
+
+        lock = C.current_extracted_base()
+        if lock:
+            self.log(f"[init] base already extracted: {lock}")
+            self._set_base_ready(lock)
+
+    def _build_ui(self):
+        self.grid_columnconfigure(0, weight=0, minsize=216)
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure(2, weight=1)
+        self.grid_rowconfigure(3, weight=0)
+        self.grid_rowconfigure(4, weight=0)
+
+        self._build_sidebar()
+        self._build_header()
+
+        self.content = ctk.CTkFrame(self, corner_radius=0, fg_color=BG)
+        self.content.grid(row=2, column=1, sticky="nsew")
+        self.content.grid_rowconfigure(0, weight=1)
+        self.content.grid_columnconfigure(0, weight=1)
+
+        self.pages = {
+            "game": GamePage(self.content, self),
+            "manual": ManualPage(self.content, self),
+        }
+        for p in self.pages.values():
+            p.grid(row=0, column=0, sticky="nsew")
+        self.show_page("game")
+
+        self._build_log_panel()
+        self._build_build_bar()
+
+    def _build_sidebar(self):
+        rail = ctk.CTkFrame(self, corner_radius=0, fg_color=SIDEBAR,
+                            width=216)
+        rail.grid(row=0, column=0, rowspan=5, sticky="nsw")
+        rail.grid_propagate(False)
+
+        logo = ctk.CTkFrame(rail, fg_color="transparent")
+        logo.pack(pady=(24, 4))
+        ctk.CTkLabel(logo, text="P₂₄", font=F(20, "bold"),
+                     text_color=ACCENT_ON, fg_color=ACCENT,
+                     corner_radius=12, width=48, height=48).pack()
+        ctk.CTkLabel(rail, text="PSP 2 PS4 AIO",
+                     font=F(15, "bold")).pack(pady=(8, 0))
+        ctk.CTkLabel(rail, text="BUILDER  ·  v2.7", font=F(9),
+                     text_color=TEXT_FAINT).pack(pady=(2, 22))
+
+        self._nav(rail, "game",   "🎮", "Build PKG",
+                  lambda: self.show_page("game"))
+        self._nav(rail, "manual", "🛠", "Manual Builder",
+                  lambda: self.show_page("manual"))
+
+        ctk.CTkFrame(rail, fg_color=BORDER, height=1)\
+            .pack(fill="x", padx=18, pady=(18, 14))
+
+        ghost(rail, "⬇  Framework 5.0",
+              self.open_framework, height=34)\
+            .pack(fill="x", padx=14, pady=3)
+        ghost(rail, "🧹 Cleanup work dir",
+              self.cleanup_workdir, height=34)\
+            .pack(fill="x", padx=14, pady=3)
+
+        ctk.CTkLabel(rail,
+                     text="All PKG lists are scanned\nfrom disk at startup.",
+                     font=F(9), text_color=TEXT_FAINT, justify="center")\
+            .pack(side="bottom", pady=18)
+
+    def _nav(self, parent, key, icon, label, command):
+        b = ctk.CTkButton(parent, text=f"{icon}   {label}",
+                          command=command, height=42, anchor="w",
+                          corner_radius=10, font=F(13), border_width=0)
+        b.pack(fill="x", padx=14, pady=3)
+        self.nav_buttons[key] = b
+
+    def _set_active_nav(self, key):
+        for k, b in self.nav_buttons.items():
+            if k == key:
+                b.configure(fg_color=SELECT, text_color=ACCENT_HI,
+                            hover_color=SELECT)
+            else:
+                b.configure(fg_color="transparent", text_color=TEXT_DIM,
+                            hover_color=SURFACE_3)
+
+    def _build_header(self):
+        hdr = ctk.CTkFrame(self, corner_radius=0, fg_color=BG, height=64)
+        hdr.grid(row=0, column=1, sticky="ew")
+        hdr.grid_propagate(False)
+        hdr.grid_columnconfigure(0, weight=1)
+
+        left = ctk.CTkFrame(hdr, fg_color="transparent")
+        left.grid(row=0, column=0, sticky="w", padx=20)
+        ctk.CTkLabel(left, text="Build PSP Game PKG",
+                     font=F(19, "bold"), anchor="w").pack(side="left")
+        ctk.CTkLabel(left,
+                     text="Turn a PSP .ISO into a PS4-installable PKG.",
+                     font=F(11), text_color=TEXT_DIM, anchor="w")\
+            .pack(side="left", padx=(14, 0), pady=(5, 0))
+
+        self.hdr_status = ctk.CTkLabel(
+            hdr, text="●  Base not extracted",
+            font=F(11, "bold"), text_color=DANGER,
+            fg_color=SURFACE, corner_radius=20,
+            padx=16, height=34)
+        self.hdr_status.grid(row=0, column=1, sticky="e", padx=20)
+
+        ctk.CTkFrame(self, fg_color=BORDER, height=1)\
+            .grid(row=1, column=1, sticky="ew")
+
+    def _build_log_panel(self):
+        self.log_panel = ctk.CTkFrame(self, fg_color=SIDEBAR,
+                                      corner_radius=0, height=160)
+        self.log_panel.grid(row=3, column=1, sticky="ew")
+        self.log_panel.grid_propagate(False)
+        self.log_panel.grid_columnconfigure(0, weight=1)
+        self.log_panel.grid_rowconfigure(1, weight=1)
+
+        head = ctk.CTkFrame(self.log_panel, fg_color="transparent", height=32)
+        head.grid(row=0, column=0, sticky="ew", padx=10)
+        head.grid_propagate(False)
+        ctk.CTkLabel(head, text="◈ TERMINAL", font=F(10, "bold"),
+                     text_color=TEXT_FAINT).pack(side="left", padx=6)
+        ghost(head, "🗑 Clear", self.clear_log,
+              width=76, height=24).pack(side="right", padx=4, pady=4)
+        self.collapse_btn = ghost(head, "▼ Collapse", self.toggle_log,
+                                  width=92, height=24)
+        self.collapse_btn.pack(side="right", padx=4, pady=4)
+
+        self.log_box = ctk.CTkTextbox(
+            self.log_panel, wrap="word",
+            font=F(11, family=FONT_MONO),
+            fg_color=SIDEBAR, text_color="#b9c8b9",
+            border_width=0, corner_radius=0)
+        self.log_box.grid(row=1, column=0, sticky="nsew",
+                          padx=12, pady=(0, 8))
+        self.log_box.configure(state="disabled")
+        for tag, col in (("ok", SUCCESS), ("err", DANGER),
+                         ("warn", WARN), ("phase", ACCENT_HI),
+                         ("dim", TEXT_FAINT)):
+            self.log_box.tag_config(tag, foreground=col)
+
+    def _build_build_bar(self):
+        bar = ctk.CTkFrame(self, fg_color=SURFACE,
+                           corner_radius=0, height=68)
+        bar.grid(row=4, column=1, sticky="ew")
+        bar.grid_propagate(False)
+        bar.grid_columnconfigure(0, weight=1)
+
+        out_wrap = ctk.CTkFrame(bar, fg_color="transparent")
+        out_wrap.grid(row=0, column=0, sticky="ew",
+                      padx=(20, 10), pady=14)
+        ctk.CTkLabel(out_wrap, text="OUTPUT", font=F(9, "bold"),
+                     text_color=TEXT_FAINT).pack(anchor="w")
+        self.output_preview_bar = ctk.CTkLabel(
+            out_wrap, text="—", font=F(12, family=FONT_MONO),
+            text_color=TEXT_DIM, anchor="w")
+        self.output_preview_bar.pack(anchor="w")
+
+        ghost(bar, "📂  Open output",
+              lambda: self.open_folder(C.OUTPUT_DIR),
+              width=130, height=42)\
+            .grid(row=0, column=1, padx=(0, 10), pady=13)
+
+        self.build_btn = ctk.CTkButton(
+            bar, text="🚀   BUILD PKG", height=42, width=210,
+            font=F(14, "bold"), corner_radius=12,
+            fg_color=ACCENT, hover_color=ACCENT_HI, text_color=ACCENT_ON,
+            command=self.do_build)
+        self.build_btn.grid(row=0, column=2, padx=(0, 20), pady=13)
+
+    def toggle_log(self):
+        self.log_collapsed = not self.log_collapsed
+        if self.log_collapsed:
+            self.log_panel.configure(height=34)
+            self.log_box.grid_remove()
+            self.collapse_btn.configure(text="▲ Expand")
+        else:
+            self.log_panel.configure(height=160)
+            self.log_box.grid()
+            self.collapse_btn.configure(text="▼ Collapse")
+
+    def _apply_window_size(self):
+        self.update_idletasks()
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        win_w = max(1120, min(1280, sw - 120))
+        win_h = max(740, min(880, sh - 140))
+        x = max(0, (sw - win_w) // 2)
+        y = max(0, (sh - win_h) // 2 - 30)
+        self.geometry(f"{win_w}x{win_h}+{x}+{y}")
+        self.minsize(1120, 740)
+
+    def show_page(self, name):
+        self._set_active_nav(name)
+        for k, p in self.pages.items():
+            if k != name:
+                p.grid_remove()
+        self.pages[name].grid()
+
+    # ---------------------------------------------------------- logging
+    def log(self, msg):
+        self.after(0, lambda m=msg: self._log_main(m))
+
+    def _log_main(self, msg):
+        try:
+            self.log_box.configure(state="normal")
+            if msg.startswith("✅"):
+                tag = "ok"
+            elif msg.startswith("❌"):
+                tag = "err"
+            elif msg.startswith("⚠️"):
+                tag = "warn"
+            elif msg.startswith("---"):
+                tag = "phase"
+            elif msg.startswith("["):
+                tag = "dim"
+            else:
+                tag = None
+            self.log_box.insert("end", msg + "\n",
+                                (tag,) if tag else ())
+            self.log_box.see("end")
+            self.log_box.configure(state="disabled")
+        except Exception:
+            pass
+
+    def clear_log(self):
+        self.log_box.configure(state="normal")
+        self.log_box.delete("1.0", "end")
+        self.log_box.configure(state="disabled")
+
+    # ---------------------------------------------------------- progress
+    def set_progress(self, pct: int, label: str = ""):
+        self.after(0, lambda: self._set_progress(pct, label))
+
+    def _set_progress(self, pct, label):
+        try:
+            gp = self.pages["game"]
+            gp.progress.set(pct / 100.0)
+            if label:
+                gp.phase_label.configure(text=label)
+        except Exception:
+            pass
+
+    # ---------------------------------------------------------- dialogs
+    def ask_main(self, prompt, title="Input", integer=False,
+                 minvalue=1, maxvalue=9999):
+        box = {}
+        done = threading.Event()
+
+        def run():
+            try:
+                if integer:
+                    box["v"] = simpledialog.askinteger(
+                        title, prompt, minvalue=minvalue, maxvalue=maxvalue)
+                else:
+                    box["v"] = simpledialog.askstring(title, prompt)
+            finally:
+                done.set()
+
+        self.after(0, run)
+        done.wait()
+        return box.get("v")
+
+    def msg_main(self, kind, title, message):
+        box = {}
+        done = threading.Event()
+
+        def run():
+            try:
+                if kind == "info":
+                    messagebox.showinfo(title, message)
+                elif kind == "error":
+                    messagebox.showerror(title, message)
+                elif kind == "warn":
+                    messagebox.showwarning(title, message)
+                elif kind == "yesno":
+                    box["v"] = messagebox.askyesno(title, message)
+            finally:
+                done.set()
+
+        self.after(0, run)
+        done.wait()
+        return box.get("v")
+
+    # ---------------------------------------------------------- UI ops
+    def open_folder(self, path: Path):
+        path.mkdir(parents=True, exist_ok=True)
+        try:
+            os.startfile(str(path))
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
+    def open_framework(self):
+        if messagebox.askyesno(
+                "Framework 5.0",
+                "Open the .NET 5.0 download page?"):
+            os.startfile(
+                "https://dotnet.microsoft.com/en-us/download/dotnet/5.0")
+
+    def cleanup_workdir(self):
+        if not messagebox.askyesno(
+                "Cleanup", "Delete tools/image0 and temp files?"):
+            return
+        C.rmtree(C.IMAGE0_DIR)
+        for f in (C.TOOLS_DIR / "image0.gp4",
+                  C.TOOLS_DIR / "image0.txt",
+                  C.TOOLS_DIR / "sort_file.txt"):
+            try:
+                f.unlink(missing_ok=True)
+            except Exception:
+                pass
+        self.hdr_status.configure(text="●  Base not extracted",
+                                  text_color=DANGER)
+        self.pages["game"].status_base.configure(text="—")
+        self.set_progress(0, "Idle")
+        self.log("[cleanup] tools/image0 wiped.")
+
+    # ---------------------------------------------------------- scan
+    def rescan_pkgs(self):
+        items = C.scan_base_pkgs()
+        self.pages["game"].set_items(items)
+        self.log(f"[scan] {len(items)} PKG(s) found "
+                 f"(base_pkgs: {sum(1 for i in items if i['source']=='base_pkgs')}, "
+                 f"official: {sum(1 for i in items if i['source']=='official')})")
+
+    def _set_base_ready(self, name: str):
+        self.hdr_status.configure(text=f"●  Ready — {name}",
+                                  text_color=SUCCESS)
+
+    def _update_output_preview(self):
+        gp = self.pages["game"]
+        disc = self.detected_disc_id or "<DISC_ID>"
+        title = self.detected_title or "<Title>"
+        base = gp.base_pkg_name or "<BasePKG>"
+        if gp.mode_var.get() == "Game PKG":
+            txt = f"{C.safe_name(title)}_{C.safe_name(disc)}_{base}.pkg"
+        else:
+            txt = f"{base}_EMU_<TITLE_ID>.pkg"
+        gp.set_output_preview(txt)
+        self.output_preview_bar.configure(text=txt)
+
+    # ---------------------------------------------------------- pickers
+    def pick_iso(self):
+        f = filedialog.askopenfilename(
+            title="Select PSP game ISO",
+            filetypes=[("ISO", "*.iso"), ("All", "*.*")])
+        if not f:
+            return
+        try:
+            p = C._clean(f)
+        except Exception as e:
+            messagebox.showerror("Bad path", str(e))
+            return
+        self.iso_file = p
+        gp = self.pages["game"]
+        gp.iso_label.configure(text=str(p), text_color=SUCCESS)
+        gp.status_iso.configure(text=p.name)
+        threading.Thread(target=self._peek_iso, daemon=True).start()
+
+    def _peek_iso(self):
+        try:
+            disc, name = read_iso_sfo(self.iso_file, self.log)
+            self.detected_disc_id = disc
+            self.detected_title = name
+            self.after(0, self._update_output_preview)
+        except Exception as e:
+            self.log(f"❌ peek error: {e}")
+
+    def pick_icon(self):
+        f = filedialog.askopenfilename(
+            title="Select icon",
+            filetypes=[("Images", "*.png *.jpg *.jpeg"),
+                       ("All", "*.*")])
+        if not f:
+            return
+        self.icon_file = C._clean(f)
+        gp = self.pages["game"]
+        gp.icon_label.configure(text=self.icon_file.name,
+                                text_color=SUCCESS)
+        gp.icon_var.set(1)
+
+    def pick_boot(self):
+        f = filedialog.askopenfilename(
+            title="Select boot image",
+            filetypes=[("Images", "*.png *.jpg *.jpeg"),
+                       ("All", "*.*")])
+        if not f:
+            return
+        self.boot_file = C._clean(f)
+        gp = self.pages["game"]
+        gp.boot_label.configure(text=self.boot_file.name,
+                                text_color=SUCCESS)
+        gp.icon_var.set(1)
+
+    # ---------------------------------------------------------- extract
+    def preview_base(self):
+        gp = self.pages["game"]
+        if not gp.base_pkg_path or not gp.base_pkg_path.exists():
+            messagebox.showwarning("No base",
+                                   "Select a PKG from the list first.")
+            return
+        threading.Thread(target=self._extract_thread,
+                         args=(gp.base_pkg_path, True),
+                         daemon=True).start()
+
+    def force_extract_base(self):
+        gp = self.pages["game"]
+        if not gp.base_pkg_path or not gp.base_pkg_path.exists():
+            messagebox.showwarning("No base",
+                                   "Select a PKG from the list first.")
+            return
+        threading.Thread(target=self._extract_thread,
+                         args=(gp.base_pkg_path, False),
+                         daemon=True).start()
+
+    def _extract_thread(self, pkg: Path, open_after: bool):
+        try:
+            self.set_progress(10, f"Extracting {pkg.stem}...")
+            ok = extract_base(pkg, self.log)
+            if not ok:
+                self.set_progress(0, "Failed")
+                return
+            self.after(0, lambda: self._set_base_ready(pkg.stem))
+            self.set_progress(30, f"{pkg.stem} extracted")
+            if open_after:
+                self.after(0,
+                           lambda: self.open_folder(C.IMAGE0_DIR))
+        except Exception as e:
+            self.log(f"❌ Extract error: {e}")
+            self.set_progress(0, "Failed")
+
+    # ---------------------------------------------------------- build
+    def do_build(self):
+        gp = self.pages["game"]
+        if gp.base_pkg_path is None:
+            messagebox.showerror("No base",
+                                 "Select a base PKG first.")
+            return
+        if gp.mode_var.get() == "Game PKG":
+            if not self.iso_file or not self.iso_file.exists():
+                messagebox.showerror("No ISO",
+                                     "Pick a game ISO first.")
+                return
+            threading.Thread(target=self._build_game_thread,
+                             daemon=True).start()
+        else:
+            threading.Thread(target=self._build_emu_thread,
+                             daemon=True).start()
+
+    def _build_game_thread(self):
+        gp = self.pages["game"]
+        try:
+            iso = self.iso_file
+            if "\x00" in str(iso):
+                self.log("❌ ISO path invalid (null byte)")
+                return
+            C.debug_path("iso", iso, self.log)
+            C.debug_path("tools", C.TOOLS_DIR, self.log)
+            C.debug_path("info", C.TOOLS_DIR / "info_temp", self.log)
+
+            if not ensure_base_extracted(gp.base_pkg_path, self.log):
+                self.set_progress(0, "Failed")
+                return
+            self.after(0,
+                       lambda: self._set_base_ready(gp.base_pkg_name))
+
+            self.set_progress(35, "Reading ISO param.sfo...")
+            self.log(f"--- Building GAME PKG from {iso.name} ---")
+            disc_id, psp_name = read_iso_sfo(iso, self.log)
+            if not disc_id:
+                self.set_progress(0, "Failed")
+                return
+            self.detected_disc_id = disc_id
+            self.detected_title = psp_name
+            self.after(0, self._update_output_preview)
+
+            self.set_progress(40, "Patching param.sfo...")
+            patch_sfo(disc_id, psp_name, self.log)
+
+            game_dir = make_game_folder(disc_id)
+            merge_dlc(game_dir, disc_id, self.log)
+
+            m = gp.decrypt_var.get()
+            self.set_progress(45, "Processing game image...")
+            if m == 1:
+                if not decrypt_and_mkiso(iso, game_dir, disc_id,
+                                         self.log):
+                    self.log("⚠️ decrypt failed — fallback to swap")
+                    swap_method(iso, game_dir, disc_id, self.log)
+            elif m == 2:
+                swap_method(iso, game_dir, disc_id, self.log)
+            else:
+                skip_copy(iso, game_dir, disc_id, self.log)
+
+            self.set_progress(72, "Applying emulator options...")
+            vals = gp.schema_form.values()
+            apply_schema_to_config(self.schema, vals, self.log)
+
+            if gp.use_overrides.get():
+                apply_overrides(self.log)
+
+            if gp.icon_var.get() == 1:
+                apply_custom_icons(self.icon_file, self.boot_file,
+                                   self.log)
+            else:
+                copy_default_icons(self.log)
+
+            out_name = (f"{C.safe_name(psp_name)}"
+                        f"_{C.safe_name(disc_id)}"
+                        f"_{gp.base_pkg_name}.pkg")
+            self.set_progress(80, "Building PKG...")
+            final = finish_pkg(out_name, disc_id, psp_name, self.log)
+            if final:
+                self.set_progress(100, f"Done — {final.name}")
+                self.msg_main("info", "Success",
+                              f"PKG created:\n{final}")
+            else:
+                self.set_progress(0, "Failed")
+        except Exception as e:
+            self.log(f"❌ Exception: {e}")
+            self.log(traceback.format_exc())
+            self.set_progress(0, "Failed")
+
+    def _build_emu_thread(self):
+        gp = self.pages["game"]
+        try:
+            if not ensure_base_extracted(gp.base_pkg_path, self.log):
+                self.set_progress(0, "Failed")
+                return
+            self.after(0,
+                       lambda: self._set_base_ready(gp.base_pkg_name))
+
+            self.set_progress(40, "Preparing emulator PKG...")
+            self.log("--- Building EMULATOR PKG ---")
+            sfo = C.IMAGE0_DIR / "sce_sys" / "param.sfo"
+            if not sfo.exists():
+                self.log("❌ param.sfo missing")
+                self.set_progress(0, "Failed")
+                return
+
+            tid = self.ask_main(
+                "TITLE_ID for this emulator PKG\n"
+                "(example: UP9000-CUSA00000_00):",
+                "Emulator TITLE_ID")
+            if not tid:
+                self.set_progress(0, "Cancelled")
+                return
+            content_id = f"{tid}-{gp.base_pkg_name}"
+            title = f"Emu {gp.base_pkg_name}"
+            for k, v in [("TITLE_ID", tid),
+                         ("CONTENT_ID", content_id),
+                         ("TITLE", title)]:
+                C.run_cmd([str(C.SFO), "-e", k, v, str(sfo)])
+
+            if gp.use_overrides.get():
+                apply_overrides(self.log)
+
+            out_name = f"{gp.base_pkg_name}_EMU_{C.safe_name(tid)}.pkg"
+            self.set_progress(80, "Building PKG...")
+            final = finish_pkg(out_name, tid, title, self.log)
+            if final:
+                self.set_progress(100, f"Done — {final.name}")
+                self.msg_main("info", "Success",
+                              f"PKG created:\n{final}")
+            else:
+                self.set_progress(0, "Failed")
+        except Exception as e:
+            self.log(f"❌ Exception: {e}")
+            self.set_progress(0, "Failed")
+
+    # ---------------------------------------------------------- manual
+    def do_manual_build(self):
+        threading.Thread(target=self._manual_thread,
+                         daemon=True).start()
+
+    def _manual_thread(self):
+        try:
+            self.manual_log("Generating GP4 ...")
+            C.run_cmd([str(C.GENGP4), str(C.IMAGE0_DIR)])
+            gp4 = C.TOOLS_DIR / "image0.gp4"
+            txt = C.TOOLS_DIR / "image0.txt"
+            if gp4.exists():
+                gp4.rename(txt)
+            if txt.exists():
+                C.run_cmd([str(C.FART), str(txt), "-i",
+                           'default_id="1"', 'default_id="0"'])
+                txt.rename(gp4)
+
+            C.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+            out = C.OUTPUT_DIR / "manual.pkg"
+            if out.exists():
+                out.unlink()
+
+            self.manual_log("orbis-pub-cmd img_create ...")
+            rc = C.run_silent([str(C.ORBIS_PLAIN), "img_create",
+                               str(gp4), str(out)])
+            if rc != 0 or not out.exists():
+                self.manual_log("❌ build failed")
+                return
+            try:
+                gp4.unlink()
+            except Exception:
+                pass
+            self.manual_log(f"✅ Created: {out}")
+            self.msg_main("info", "Success", f"Created:\n{out}")
+        except Exception as e:
+            self.manual_log(f"❌ Exception: {e}")
+
+    def manual_log(self, msg):
+        mp = self.pages["manual"]
+
+        def do():
+            try:
+                mp.manual_log.configure(state="normal")
+                mp.manual_log.insert("end", msg + "\n")
+                mp.manual_log.see("end")
+                mp.manual_log.configure(state="disabled")
+            except Exception:
+                pass
+        self.after(0, do)
+
+
+# ============================================================================
+def run():
+    app = PSP2PS4App()
+    missing = [p for p in (C.ORBIS, C.GENGP4, C.FART, C.SFO, C.MAGICK,
+                           C.SEVENZ, C.PSPDECRYPT, C.MKISOFS)
+               if not p.exists()]
+    if missing:
+        app.log("⚠️ Missing tools:")
+        for m in missing:
+            app.log(f"   - {m}")
+    app.mainloop()
+
+
+if __name__ == "__main__":
+    run()
