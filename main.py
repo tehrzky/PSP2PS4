@@ -6,12 +6,15 @@ Contains:
   - GamePage / ManualPage layouts
   - the build pipeline (extract, patch, decrypt, build)
 """
+
 import os
 import json
 import time
 import shutil
+import subprocess
 import threading
 import traceback
+
 from pathlib import Path
 
 import tkinter as tk
@@ -88,7 +91,7 @@ def _cleanup_sce(target: Path):
 
 def extract_base(pkg: Path, log) -> bool:
     log(f"--- Extracting base: {pkg.stem} ---")
-    C.debug_path("pkg", pkg, log)
+    
 
     C.rmtree(C.IMAGE0_DIR)
     C.IMAGE0_DIR.mkdir(parents=True, exist_ok=True)
@@ -136,8 +139,6 @@ def ensure_base_extracted(base_pkg: Path, log) -> bool:
 
 def read_iso_sfo(iso: Path, log):
     info = C.TOOLS_DIR / "info_temp"
-    log(f"[debug] info: {repr(str(info))}")
-    log(f"[debug] iso : {repr(str(iso))}")
     C.rmtree(info)
     try:
         (info / "PSP_GAME").mkdir(parents=True, exist_ok=True)
@@ -234,13 +235,29 @@ def decrypt_and_mkiso(iso: Path, game_dir: Path, disc_id: str, log) -> bool:
 
     log("Decrypting EBOOT.BIN ...")
     C.run_cmd([str(C.PSPDECRYPT), str(eboot)])
-    dec = eboot.with_suffix(".BIN.DEC")
-    if not dec.exists():
-        log("EBOOT.BIN.DEC not produced")
-        C.rmtree(tmp)
-        return False
-    eboot.unlink()
-    dec.rename(eboot)
+
+    # pspdecrypt.exe output naming varies by build. Check every candidate.
+    candidates = [
+        eboot.with_suffix(".BIN.DEC"),     # EBOOT.BIN.DEC
+        eboot.parent / "EBOOT.DEC",        # EBOOT.DEC
+        eboot.parent / "EBOOT.BIN.dec",    # EBOOT.BIN.dec
+        eboot.parent / "EBOOT.dec",        # EBOOT.dec
+    ]
+    dec = next((c for c in candidates if c.exists()), None)
+
+    if dec is None:
+        # No decrypted file — check if pspdecrypt overwrote in place
+        if eboot.exists() and eboot.stat().st_size > 0:
+            log("⚠️ no .DEC produced — assuming EBOOT is already decrypted")
+            # keep going with the original EBOOT.BIN
+        else:
+            log("❌ EBOOT.BIN missing after decrypt attempt")
+            C.rmtree(tmp)
+            return False
+    else:
+        log(f"✅ decrypted → {dec.name}")
+        eboot.unlink()
+        dec.rename(eboot)
 
     out_iso = game_dir / f"{disc_id}#v1.00.IMG"
     log("mkisofs ...")
@@ -1146,9 +1163,7 @@ class PSP2PS4App(ctk.CTk):
             if "\x00" in str(iso):
                 self.log("❌ ISO path invalid (null byte)")
                 return
-            C.debug_path("iso", iso, self.log)
-            C.debug_path("tools", C.TOOLS_DIR, self.log)
-            C.debug_path("info", C.TOOLS_DIR / "info_temp", self.log)
+            
 
             if not ensure_base_extracted(gp.base_pkg_path, self.log):
                 self.set_progress(0, "Failed")
