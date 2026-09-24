@@ -827,25 +827,36 @@ class PSP2PS4App(ctk.CTk):
 
     # ---------------------------------------------------------- build state
     def set_build_state(self, active: bool, phase: str = ""):
-        def apply():
-            try:
-                if active:
-                    txt = "⏳  BUILDING…" + (f"  {phase}" if phase else "")
-                    self.build_btn.configure(
-                        text=txt, state="disabled",
-                        fg_color=SURFACE_3, text_color=TEXT_DIM)
-                else:
-                    mode = self.pages["game"].mode_var.get() \
-                        if "game" in self.pages else "Game PKG"
-                    txt = ("🚀   BUILD PKG"
-                           if mode == "Game PKG"
-                           else "🔨   BUILD EMULATOR PKG")
-                    self.build_btn.configure(
-                        text=txt, state="normal",
-                        fg_color=ACCENT, text_color=ACCENT_ON)
-            except Exception:
-                pass
-        self.after(0, apply)
+        """Toggle the build button between idle and busy state."""
+        try:
+            if active:
+                txt = "⏳  BUILDING…" + (f"  {phase}" if phase else "")
+                self.build_btn.configure(
+                    text=txt,
+                    state="disabled",
+                    fg_color=SURFACE_3,
+                    text_color=TEXT_DIM)
+            else:
+                mode = "Game PKG"
+                try:
+                    mode = self.pages["game"].mode_var.get()
+                except Exception:
+                    pass
+                txt = ("🚀   BUILD PKG"
+                       if mode == "Game PKG"
+                       else "🔨   BUILD EMULATOR PKG")
+                self.build_btn.configure(
+                    text=txt,
+                    state="normal",
+                    fg_color=ACCENT,
+                    text_color=ACCENT_ON)
+        except Exception as e:
+            print(f"set_build_state error: {e}", flush=True)
+        # Force a UI refresh so the button visibly changes
+        try:
+            self.update_idletasks()
+        except Exception:
+            pass
 
     # ---------------------------------------------------------- dialogs
     def ask_main(self, prompt, title="Input", integer=False,
