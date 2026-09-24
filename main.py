@@ -745,14 +745,14 @@ class PSP2PS4App(ctk.CTk):
 
     def _build_build_bar(self):
         bar = ctk.CTkFrame(self, fg_color=SURFACE,
-                           corner_radius=0, height=58)
+                           corner_radius=0, height=74)     # was 58
         bar.grid(row=3, column=0, sticky="ew")
         bar.grid_propagate(False)
         bar.grid_columnconfigure(0, weight=1)
 
         out_wrap = ctk.CTkFrame(bar, fg_color="transparent")
         out_wrap.grid(row=0, column=0, sticky="ew",
-                      padx=(16, 10), pady=10)
+                      padx=(16, 10), pady=16)              # was 10
         ctk.CTkLabel(out_wrap, text="OUTPUT", font=F(9, "bold"),
                      text_color=TEXT_FAINT).pack(anchor="w")
         self.output_preview_bar = ctk.CTkLabel(
@@ -763,14 +763,14 @@ class PSP2PS4App(ctk.CTk):
         ghost(bar, "📂  Open output",
               lambda: self.open_folder(C.OUTPUT_DIR),
               width=126, height=38)\
-            .grid(row=0, column=1, padx=(0, 8), pady=10)
+            .grid(row=0, column=1, padx=(0, 8), pady=18)   # was 10
 
         self.build_btn = ctk.CTkButton(
             bar, text="🚀   BUILD PKG", height=38, width=200,
             font=F(13, "bold"), corner_radius=10,
             fg_color=ACCENT, hover_color=ACCENT_HI, text_color=ACCENT_ON,
             command=self.do_build)
-        self.build_btn.grid(row=0, column=2, padx=(0, 16), pady=10)
+        self.build_btn.grid(row=0, column=2, padx=(0, 20), pady=18)
 
     def _apply_window_size(self):
         self.update_idletasks()
@@ -1004,18 +1004,14 @@ class PSP2PS4App(ctk.CTk):
             messagebox.showwarning("No base",
                                    "Select a PKG from the list first.")
             return
-        threading.Thread(target=self._extract_thread,
-                         args=(gp.base_pkg_path, True),
-                         daemon=True).start()
-
-    def force_extract_base(self):
-        gp = self.pages["game"]
-        if not gp.base_pkg_path or not gp.base_pkg_path.exists():
-            messagebox.showwarning("No base",
-                                   "Select a PKG from the list first.")
+        # If this exact base is already extracted, just open the folder.
+        name = gp.base_pkg_path.stem
+        if C.image0_looks_valid() and C.current_extracted_base() == name:
+            self.log(f"[preview] {name} already extracted — opening folder")
+            self.open_folder(C.IMAGE0_DIR)
             return
         threading.Thread(target=self._extract_thread,
-                         args=(gp.base_pkg_path, False),
+                         args=(gp.base_pkg_path, True),
                          daemon=True).start()
 
     def _extract_thread(self, pkg: Path, open_after: bool):
@@ -1039,6 +1035,7 @@ class PSP2PS4App(ctk.CTk):
         if gp.base_pkg_path is None:
             messagebox.showerror("No base", "Select a base PKG first.")
             return
+
         if gp.mode_var.get() == "Game PKG":
             if not self.iso_file or not self.iso_file.exists():
                 messagebox.showerror("No ISO", "Pick a game ISO first.")
@@ -1046,8 +1043,14 @@ class PSP2PS4App(ctk.CTk):
             threading.Thread(target=self._build_game_thread,
                              daemon=True).start()
         else:
+            tid = simpledialog.askstring(
+                "Emulator TITLE_ID",
+                "TITLE_ID for this emulator PKG\n"
+                "(example: UP9000-CUSA00000_00):")
+            if not tid:
+                return
             threading.Thread(target=self._build_emu_thread,
-                             daemon=True).start()
+                             args=(tid,), daemon=True).start()
 
     def _build_game_thread(self):
         gp = self.pages["game"]
@@ -1118,7 +1121,7 @@ class PSP2PS4App(ctk.CTk):
         finally:
             self.set_build_state(False)
 
-    def _build_emu_thread(self):
+    def _build_emu_thread(self, tid):
         gp = self.pages["game"]
         try:
             self.set_build_state(True, "extracting base")
@@ -1134,19 +1137,13 @@ class PSP2PS4App(ctk.CTk):
                 self.set_progress(0, "Failed")
                 return
 
-            tid = self.ask_main(
-                "TITLE_ID for this emulator PKG\n"
-                "(example: UP9000-CUSA00000_00):",
-                "Emulator TITLE_ID")
-            if not tid:
-                self.set_progress(0, "Cancelled")
-                return
             content_id = f"{tid}-{gp.base_pkg_name}"
             title = f"Emu {gp.base_pkg_name}"
             for k, v in [("TITLE_ID", tid),
                          ("CONTENT_ID", content_id),
                          ("TITLE", title)]:
                 C.run_cmd([str(C.SFO), "-e", k, v, str(sfo)])
+            # ... rest unchanged
 
             if gp.use_overrides.get():
                 apply_overrides(self.log)
