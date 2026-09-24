@@ -1052,23 +1052,20 @@ class PSP2PS4App(ctk.CTk):
     # ---------------------------------------------------------- build
     def do_build(self):
         gp = self.pages["game"]
-        print(f"=== do_build called ===", flush=True)
-        print(f"    mode      = {gp.mode_var.get()!r}", flush=True)
-        print(f"    base_pkg  = {gp.base_pkg_path}", flush=True)
-        print(f"    iso_file  = {self.iso_file}", flush=True)
-        self.log(f"[build] clicked — mode={gp.mode_var.get()}")
+        self.log(f"[build] clicked — mode={gp.mode_var.get()} "
+                 f"base={gp.base_pkg_path} iso={self.iso_file}")
 
         if gp.base_pkg_path is None:
-            self.log("❌ no base selected")
+            self.log("❌ No base PKG selected")
             messagebox.showerror("No base", "Select a base PKG first.")
             return
 
         if gp.mode_var.get() == "Game PKG":
             if not self.iso_file or not self.iso_file.exists():
-                self.log("❌ no ISO selected")
+                self.log("❌ No ISO selected")
                 messagebox.showerror("No ISO", "Pick a game ISO first.")
                 return
-            self.log("[build] starting game build thread")
+            self.log("[build] starting thread")
             threading.Thread(target=self._build_game_thread,
                              daemon=True).start()
         else:
@@ -1083,8 +1080,11 @@ class PSP2PS4App(ctk.CTk):
 
     def _build_game_thread(self):
         gp = self.pages["game"]
+        self.set_build_state(True, "starting")
         try:
             iso = self.iso_file
+            self.log(f"[build] thread running, iso={iso}")
+
             self.set_build_state(True, "extracting base")
             if not ensure_base_extracted(gp.base_pkg_path, self.log):
                 self.set_progress(0, "Failed")
@@ -1139,10 +1139,6 @@ class PSP2PS4App(ctk.CTk):
             final = finish_pkg(out_name, disc_id, psp_name, self.log)
             if final:
                 self.set_progress(100, f"Done — {final.name}")
-                self.msg_main("info", "Success",
-                              f"PKG created:\n{final}")
-            else:
-                self.set_progress(0, "Failed")
         except Exception as e:
             self.log(f"❌ Exception: {e}")
             self.log(traceback.format_exc())
