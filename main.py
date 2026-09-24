@@ -94,7 +94,7 @@ def F(size=13, weight="normal", family=FONT):
     return ctk.CTkFont(family=family, size=size, weight=weight)
 
 
-def ghost(parent, text, command, width=None, height=32, icon=True):
+def ghost(parent, text, command, width=120, height=32, icon=True):
     """Standard secondary button: transparent w/ hairline border."""
     return ctk.CTkButton(
         parent, text=text, command=command,
