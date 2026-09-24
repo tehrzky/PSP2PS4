@@ -246,7 +246,7 @@ class PSP2PS4App(ctk.CTk):
             font=ctk.CTkFont(size=16, weight="bold"),
             command=self.do_build,
         )
-        self.build_btn.grid(row=20, column=0, pady=20, padx=20, sticky="ew")
+        self.build_btn.pack(fill="x", padx=20, pady=20)
 
         # Log
         s9 = self._section(page, "Log", "")
