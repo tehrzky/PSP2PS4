@@ -1,13 +1,9 @@
 """
-PSP 2 PS4 AIO — GUI
-Two columns + log panel at bottom.
+PSP 2 PS4 AIO — GUI v2.6 (Redesign)
+Modern dark layout: header bar · slim nav rail · step cards · live summary
+panel · docked terminal log · gradient build bar.
 
-- Auto-extracts base PKG on Build (skipped if already extracted via .base_lock)
-- Manual "Extract Base PKG" button for force re-extract
-- "Preview base" button to inspect contents without building
-- Compact, collapsible log panel
-
-All PKG lists scanned from disk. Nothing about emulators is hardcoded.
+Build logic is identical to v2.5 — only the presentation layer changed.
 """
 import os
 import sys
@@ -16,6 +12,7 @@ import time
 import shutil
 import subprocess
 import threading
+import traceback
 from pathlib import Path
 
 import tkinter as tk
@@ -23,16 +20,19 @@ from tkinter import filedialog, messagebox, simpledialog
 
 import customtkinter as ctk
 
+
 # ----------------------------------------------------------------------------
 # Paths (hardened against null-byte surprises)
 # ----------------------------------------------------------------------------
 def _clean(p) -> Path:
     return Path(str(p).replace("\x00", "")).resolve()
 
+
 def base_dir() -> Path:
     if getattr(sys, "frozen", False):
         return _clean(Path(sys.executable).parent)
     return _clean(Path(__file__).parent)
+
 
 BASE_DIR      = base_dir()
 TOOLS_DIR     = BASE_DIR / "tools"
@@ -59,21 +59,51 @@ AWK_NL        = TOOLS_DIR / "awk" / "nl.exe"
 AWK           = TOOLS_DIR / "awk" / "awk.exe"
 SFOINFO       = TOOLS_DIR / "SFOInfo.exe"
 
+
 # ----------------------------------------------------------------------------
-# Theme
+# Design tokens — tweak these to re-skin the whole app
 # ----------------------------------------------------------------------------
-COL_BG          = "#1a1a1e"
-COL_CARD        = "#232327"
-COL_CARD_HEADER = "#2f2f38"
-COL_BORDER      = "#3a3a42"
-COL_ACCENT      = "#8ab4f8"
-COL_TEXT_DIM    = "#999999"
-COL_SUCCESS     = "#3fb950"
-COL_WARNING     = "#d29922"
-COL_DANGER      = "#f85149"
+BG         = "#0e0f13"   # window background
+SIDEBAR    = "#12131a"   # nav rail
+SURFACE    = "#171a21"   # cards
+SURFACE_2  = "#1e222c"   # card headers / inputs
+SURFACE_3  = "#262b38"   # hover / raised
+BORDER     = "#2b3040"
+BORDER_LT  = "#3d445c"
+ACCENT     = "#7c9bff"
+ACCENT_HI  = "#aec0ff"
+ACCENT_ON  = "#0b0d14"   # text drawn on accent buttons
+SELECT     = "#2b3a5e"   # selected list-row tint
+TEXT       = "#e9ecf4"
+TEXT_DIM   = "#9aa0b4"
+TEXT_FAINT = "#626a80"
+SUCCESS    = "#4ade80"
+WARN       = "#fbbf24"
+DANGER     = "#f87171"
+
+RADIUS     = 14
+RADIUS_SM  = 10
+FONT       = "Segoe UI"
+FONT_MONO  = "Cascadia Mono"
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
+
+
+def F(size=13, weight="normal", family=FONT):
+    return ctk.CTkFont(family=family, size=size, weight=weight)
+
+
+def ghost(parent, text, command, width=None, height=32, icon=True):
+    """Standard secondary button: transparent w/ hairline border."""
+    return ctk.CTkButton(
+        parent, text=text, command=command,
+        width=width, height=height,
+        fg_color="transparent", hover_color=SURFACE_3,
+        border_width=1, border_color=BORDER,
+        text_color=TEXT_DIM, font=F(12),
+        corner_radius=RADIUS_SM)
+
 
 # ----------------------------------------------------------------------------
 # Folder READMEs
@@ -109,12 +139,14 @@ FOLDER_READMES = {
     ),
 }
 
+
 def ensure_folders():
     for d, readme in FOLDER_READMES.items():
         d.mkdir(parents=True, exist_ok=True)
         r = d / "README.txt"
         if not r.exists():
             r.write_text(readme, encoding="utf-8")
+
 
 def migrate_old_folders(log=None):
     migrations = [
@@ -140,6 +172,7 @@ def migrate_old_folders(log=None):
                 old.rmdir()
             except Exception:
                 pass
+
 
 def load_schema() -> dict:
     if SCHEMA_FILE.exists():
@@ -172,6 +205,7 @@ def load_schema() -> dict:
         },
     }
 
+
 # ----------------------------------------------------------------------------
 # Shell helpers
 # ----------------------------------------------------------------------------
@@ -186,18 +220,22 @@ def run_cmd(cmd, cwd=None):
     except Exception as e:
         return -1, str(e)
 
+
 def run_visible(cmd, cwd=None):
     try:
         return subprocess.run(cmd, cwd=cwd).returncode
     except Exception:
         return -1
 
+
 def rmtree(p):
     if Path(p).exists():
         shutil.rmtree(p, ignore_errors=True)
 
+
 def safe_name(s: str) -> str:
     return "".join(c for c in s if c not in r'<>:"/\|?*').strip()
+
 
 def human_size(n: int) -> str:
     for unit in ("B", "KB", "MB", "GB"):
@@ -205,6 +243,7 @@ def human_size(n: int) -> str:
             return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
         n /= 1024
     return f"{n:.1f} TB"
+
 
 def scan_base_pkgs():
     out = []
@@ -216,25 +255,21 @@ def scan_base_pkgs():
                 size = pkg.stat().st_size
             except Exception:
                 size = 0
-            out.append({
-                "source": src,
-                "name":   pkg.stem,
-                "path":   pkg,
-                "size":   size,
-            })
+            out.append({"source": src, "name": pkg.stem, "path": pkg, "size": size})
     return out
+
 
 # ----------------------------------------------------------------------------
 # Base lock helpers
 # ----------------------------------------------------------------------------
 def current_extracted_base() -> str:
-    """Return the name of the base currently extracted, or ''."""
     if not LOCK_FILE.exists():
         return ""
     try:
         return LOCK_FILE.read_text(encoding="utf-8").strip()
     except Exception:
         return ""
+
 
 def write_lock(base_name: str):
     try:
@@ -243,11 +278,13 @@ def write_lock(base_name: str):
     except Exception:
         pass
 
+
 def image0_looks_valid() -> bool:
     return (IMAGE0_DIR / "sce_sys" / "param.sfo").exists()
 
+
 # ----------------------------------------------------------------------------
-# Schema form (aligned mini-cards)
+# Schema form (mini option cards)
 # ----------------------------------------------------------------------------
 class SchemaForm:
     def __init__(self, parent, schema: dict):
@@ -257,19 +294,18 @@ class SchemaForm:
 
     def _build(self, parent):
         for key, spec in self.schema.items():
-            box = ctk.CTkFrame(parent, fg_color="#1c1c20",
-                               corner_radius=6, border_width=1,
-                               border_color="#2a2a30")
-            box.pack(fill="x", pady=4, padx=2)
+            box = ctk.CTkFrame(parent, fg_color=SURFACE_2,
+                               corner_radius=RADIUS_SM, border_width=1,
+                               border_color=BORDER)
+            box.pack(fill="x", pady=5)
             box.grid_columnconfigure(0, weight=1)
 
             top = ctk.CTkFrame(box, fg_color="transparent")
-            top.grid(row=0, column=0, sticky="ew", padx=10, pady=(8, 2))
+            top.grid(row=0, column=0, sticky="ew", padx=12, pady=(10, 2))
             top.grid_columnconfigure(0, weight=1)
 
             ctk.CTkLabel(top, text=spec.get("label", key),
-                         font=ctk.CTkFont(size=12, weight="bold"),
-                         anchor="w")\
+                         font=F(12, "bold"), anchor="w")\
                 .grid(row=0, column=0, sticky="w")
 
             kind = spec.get("type", "text")
@@ -282,107 +318,97 @@ class SchemaForm:
                     (c["label"] for c in spec["choices"] if c["value"] == default),
                     values[0] if values else "")
                 var = tk.StringVar(value=default_label)
-                ctk.CTkOptionMenu(top, values=values, variable=var, width=190)\
+                ctk.CTkOptionMenu(top, values=values, variable=var, width=190,
+                                  fg_color=SURFACE_3, button_color=SURFACE_3,
+                                  button_hover_color=BORDER_LT)\
                     .grid(row=0, column=1, sticky="e")
                 self.vars[key] = ("choice", var, l2v)
             else:
                 var = tk.StringVar(value=default)
-                ctk.CTkEntry(top, textvariable=var, width=280)\
+                ctk.CTkEntry(top, textvariable=var, width=280,
+                             fg_color=SURFACE_3, border_color=BORDER)\
                     .grid(row=0, column=1, sticky="e")
                 self.vars[key] = ("text", var, None)
 
             if spec.get("description"):
                 ctk.CTkLabel(box, text=spec["description"],
-                             font=ctk.CTkFont(size=10),
-                             text_color=COL_TEXT_DIM,
+                             font=F(10), text_color=TEXT_FAINT,
                              wraplength=560, justify="left", anchor="w")\
-                    .grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 8))
+                    .grid(row=1, column=0, sticky="ew", padx=12, pady=(0, 10))
 
     def values(self) -> dict:
         out = {}
         for key, (kind, var, l2v) in self.vars.items():
-            if kind == "choice":
-                out[key] = l2v.get(var.get(), var.get())
-            else:
-                out[key] = var.get()
+            out[key] = l2v.get(var.get(), var.get()) if kind == "choice" else var.get()
         return out
 
 
 # ----------------------------------------------------------------------------
-# Card helper
+# Card — numbered step container
 # ----------------------------------------------------------------------------
 class Card(ctk.CTkFrame):
     def __init__(self, parent, number, title, subtitle=""):
-        super().__init__(parent, corner_radius=10,
-                         fg_color=COL_CARD,
-                         border_width=1, border_color=COL_BORDER)
+        super().__init__(parent, corner_radius=RADIUS,
+                         fg_color=SURFACE,
+                         border_width=1, border_color=BORDER)
         self.grid_columnconfigure(0, weight=1)
 
-        header = ctk.CTkFrame(self, fg_color=COL_CARD_HEADER,
-                              corner_radius=8, height=40)
+        header = ctk.CTkFrame(self, fg_color=SURFACE_2,
+                              corner_radius=RADIUS, height=46)
         header.grid(row=0, column=0, sticky="ew", padx=1, pady=(1, 0))
         header.grid_propagate(False)
         header.grid_columnconfigure(2, weight=1)
 
-        ctk.CTkLabel(header, text=f" {number} ",
-                     font=ctk.CTkFont(size=13, weight="bold"),
-                     text_color=COL_ACCENT,
-                     fg_color="#1e293b", corner_radius=6)\
-            .grid(row=0, column=0, padx=(12, 8), pady=8)
-        ctk.CTkLabel(header, text=title,
-                     font=ctk.CTkFont(size=13, weight="bold"))\
+        ctk.CTkLabel(header, text=str(number),
+                     font=F(12, "bold"), text_color=ACCENT_ON,
+                     fg_color=ACCENT, corner_radius=8, width=28, height=28)\
+            .grid(row=0, column=0, padx=(14, 10), pady=9)
+        ctk.CTkLabel(header, text=title, font=F(14, "bold"), anchor="w")\
             .grid(row=0, column=1, sticky="w")
         if subtitle:
-            ctk.CTkLabel(header, text=subtitle,
-                         font=ctk.CTkFont(size=10),
-                         text_color=COL_TEXT_DIM)\
-                .grid(row=0, column=2, sticky="w", padx=12)
+            ctk.CTkLabel(header, text=subtitle, font=F(10),
+                         text_color=TEXT_FAINT, anchor="e")\
+                .grid(row=0, column=2, sticky="e", padx=16)
 
         self.body = ctk.CTkFrame(self, fg_color="transparent")
-        self.body.grid(row=1, column=0, sticky="ew", padx=14, pady=12)
+        self.body.grid(row=1, column=0, sticky="ew", padx=16, pady=(4, 16))
         self.body.grid_columnconfigure(0, weight=1)
 
 
 # ----------------------------------------------------------------------------
-# PKG listbox
+# PkgList — three-column selectable list with hover
 # ----------------------------------------------------------------------------
 class PkgList(ctk.CTkFrame):
     HEADERS = ("Source", "Name", "Size")
 
-    def __init__(self, parent, on_select, height=180):
-        super().__init__(parent, fg_color="#1c1c20",
-                         corner_radius=8, border_width=1,
-                         border_color=COL_BORDER)
+    def __init__(self, parent, on_select, height=190):
+        super().__init__(parent, fg_color=SURFACE_2,
+                         corner_radius=RADIUS_SM, border_width=1,
+                         border_color=BORDER)
         self.on_select = on_select
         self.selected_index = None
         self.items = []
         self.row_widgets = []
 
-        hdr = ctk.CTkFrame(self, fg_color="#26262b",
-                           corner_radius=0, height=28)
+        hdr = ctk.CTkFrame(self, fg_color=SURFACE_3, corner_radius=0, height=30)
         hdr.pack(fill="x", padx=1, pady=(1, 0))
         hdr.pack_propagate(False)
-        for i, (txt, w) in enumerate(zip(self.HEADERS, (90, 260, 80))):
+        for i, (txt, w) in enumerate(zip(self.HEADERS, (86, 250, 76))):
             ctk.CTkLabel(hdr, text=txt, width=w, anchor="w",
-                         font=ctk.CTkFont(size=11, weight="bold"),
-                         text_color="#c8c8d0")\
+                         font=F(10, "bold"), text_color=TEXT_DIM)\
                 .pack(side="left", padx=(12 if i == 0 else 4, 0))
 
         self.scroll = ctk.CTkScrollableFrame(
-            self, fg_color="#1c1c20", height=height - 40,
-            scrollbar_button_color="#3a3a42",
-            scrollbar_button_hover_color="#505058")
+            self, fg_color=SURFACE_2, height=height - 42,
+            scrollbar_button_color=BORDER,
+            scrollbar_button_hover_color=BORDER_LT)
         self.scroll.pack(fill="both", expand=True, padx=2, pady=2)
 
         self.empty = ctk.CTkLabel(
             self.scroll,
-            text="No PKGs found.\n\n"
-                 "Drop *.pkg files into base_pkgs/ or official_pkgs/,\n"
-                 "then click ↻ Rescan.",
-            justify="center",
-            text_color=COL_TEXT_DIM,
-            font=ctk.CTkFont(size=11))
-        self.empty.pack(pady=30)
+            text="No PKGs found.\n\nDrop *.pkg files into base_pkgs/ or official_pkgs/,\nthen click ↻ Rescan.",
+            justify="center", text_color=TEXT_FAINT, font=F(11))
+        self.empty.pack(pady=28)
 
     def set_items(self, items):
         for w in self.row_widgets:
@@ -392,41 +418,49 @@ class PkgList(ctk.CTkFrame):
         self.selected_index = None
 
         if not items:
-            self.empty.pack(pady=30)
+            self.empty.pack(pady=28)
             return
         self.empty.pack_forget()
-
         for idx, item in enumerate(items):
             self._make_row(idx, item)
 
     def _make_row(self, idx, item):
         row = ctk.CTkFrame(self.scroll, fg_color="transparent",
-                           corner_radius=6, height=28)
-        row.pack(fill="x", padx=2, pady=1)
+                           corner_radius=8, height=30)
+        row.pack(fill="x", padx=3, pady=2)
         row.pack_propagate(False)
 
-        ctk.CTkLabel(row, text=item["source"], width=90, anchor="w",
-                     font=ctk.CTkFont(size=11),
-                     text_color="#a0a0b0")\
+        ctk.CTkLabel(row, text=item["source"], width=86, anchor="w",
+                     font=F(11), text_color=TEXT_DIM)\
             .pack(side="left", padx=(10, 4))
-        ctk.CTkLabel(row, text=item["name"], width=260, anchor="w",
-                     font=ctk.CTkFont(size=11))\
+        ctk.CTkLabel(row, text=item["name"], width=250, anchor="w",
+                     font=F(11))\
             .pack(side="left")
-        ctk.CTkLabel(row, text=human_size(item["size"]), width=80, anchor="w",
-                     font=ctk.CTkFont(size=11),
-                     text_color="#a0a0b0")\
+        ctk.CTkLabel(row, text=human_size(item["size"]), width=76, anchor="w",
+                     font=F(11), text_color=TEXT_DIM)\
             .pack(side="left")
 
         def click(_e, i=idx):
             self._select(i)
+
+        def enter(_e, r=row, i=idx):
+            if i != self.selected_index:
+                r.configure(fg_color=SURFACE_3)
+
+        def leave(_e, r=row, i=idx):
+            if i != self.selected_index:
+                r.configure(fg_color="transparent")
+
         for w in [row] + list(row.winfo_children()):
             w.bind("<Button-1>", click)
+            w.bind("<Enter>", enter)
+            w.bind("<Leave>", leave)
         self.row_widgets.append(row)
 
     def _select(self, idx):
-        for i, row in enumerate(self.row_widgets):
-            row.configure(fg_color="#2c3a55" if i == idx else "transparent")
         self.selected_index = idx
+        for i, row in enumerate(self.row_widgets):
+            row.configure(fg_color=SELECT if i == idx else "transparent")
         if 0 <= idx < len(self.items):
             self.on_select(self.items[idx])
 
@@ -444,6 +478,7 @@ class PSP2PS4App(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("PSP 2 PS4 AIO")
+        self.configure(fg_color=BG)
         ensure_folders()
 
         # state
@@ -456,69 +491,35 @@ class PSP2PS4App(ctk.CTk):
         self.detected_title: str = ""
         self.schema = load_schema()
         self.log_collapsed = False
+        self.nav_buttons = {}
 
         self._build_ui()
         self._apply_window_size()
 
-        # log startup info
         self.log(f"[init] base_dir = {BASE_DIR}")
         self.log(f"[init] tools    = {TOOLS_DIR}")
 
         migrate_old_folders(log=self.log)
         self.rescan_pkgs()
 
-        # restore lock if it exists
         lock = current_extracted_base()
         if lock:
             self.log(f"[init] base already extracted: {lock}")
-            self.base_status.configure(
-                text=f"● Ready  ({lock})", text_color=COL_SUCCESS)
+            self._set_base_ready(lock)
 
-    # ------------------------------------------------------------- UI
+    # ============================================================ UI shell
     def _build_ui(self):
-        self.grid_columnconfigure(0, weight=0, minsize=230)
-        self.grid_columnconfigure(1, weight=1)
-        self.grid_rowconfigure(0, weight=1)   # top area
-        self.grid_rowconfigure(1, weight=0)   # log
-        self.grid_rowconfigure(2, weight=0)   # build bar
+        self.grid_columnconfigure(0, weight=0, minsize=216)  # nav rail
+        self.grid_columnconfigure(1, weight=1)               # content
+        self.grid_rowconfigure(2, weight=1)                  # pages
+        self.grid_rowconfigure(3, weight=0)                  # log
+        self.grid_rowconfigure(4, weight=0)                  # build bar
 
-        # ---- sidebar ----
-        side = ctk.CTkFrame(self, width=230, corner_radius=0,
-                            fg_color="#161619")
-        side.grid(row=0, column=0, rowspan=3, sticky="nsw")
-        side.grid_propagate(False)
+        self._build_sidebar()
+        self._build_header()
 
-        ctk.CTkLabel(side, text="PSP 2 PS4 AIO",
-                     font=ctk.CTkFont(size=18, weight="bold"))\
-            .pack(pady=(22, 2))
-        ctk.CTkLabel(side, text="GUI  •  V2.5",
-                     font=ctk.CTkFont(size=10),
-                     text_color=COL_TEXT_DIM).pack(pady=(0, 22))
-
-        ctk.CTkButton(side, text="🎮  Build PKG",
-                      command=lambda: self.show_page("game"),
-                      height=38, anchor="w")\
-            .pack(pady=4, padx=14, fill="x")
-        ctk.CTkButton(side, text="📦  Manual Builder",
-                      command=lambda: self.show_page("manual"),
-                      height=38, anchor="w",
-                      fg_color="transparent", border_width=1)\
-            .pack(pady=4, padx=14, fill="x")
-        ctk.CTkButton(side, text="⬇️  Install Framework 5.0",
-                      command=self.open_framework,
-                      height=38, anchor="w",
-                      fg_color="transparent", border_width=1)\
-            .pack(pady=4, padx=14, fill="x")
-
-        ctk.CTkButton(side, text="🧹  Cleanup work dir",
-                      command=self.cleanup_workdir,
-                      fg_color="#8B0000", hover_color="#5a0000",
-                      height=34)\
-            .pack(side="bottom", pady=14, padx=14, fill="x")
-
-        # ---- content host ----
-        self.content = ctk.CTkFrame(self, corner_radius=0, fg_color=COL_BG)
-        self.content.grid(row=0, column=1, sticky="nsew")
+        self.content = ctk.CTkFrame(self, corner_radius=0, fg_color=BG)
+        self.content.grid(row=2, column=1, sticky="nsew")
         self.content.grid_rowconfigure(0, weight=1)
         self.content.grid_columnconfigure(0, weight=1)
 
@@ -527,387 +528,436 @@ class PSP2PS4App(ctk.CTk):
         self._build_manual_page()
         self.show_page("game")
 
-        # ---- log panel (bottom, full width under content) ----
         self._build_log_panel()
+        self._build_build_bar()
 
-        # ---- build bar (very bottom) ----
-        self._build_bottom_bar()
+    def _build_sidebar(self):
+        rail = ctk.CTkFrame(self, corner_radius=0, fg_color=SIDEBAR)
+        rail.grid(row=0, column=0, rowspan=5, sticky="nsw")
+        rail.grid_propagate(False)
+        rail.configure(width=216)
+
+        # logo mark
+        logo = ctk.CTkFrame(rail, fg_color="transparent")
+        logo.pack(pady=(24, 4))
+        mark = ctk.CTkLabel(logo, text="P₂₄", font=F(20, "bold"),
+                            text_color=ACCENT_ON, fg_color=ACCENT,
+                            corner_radius=12, width=48, height=48)
+        mark.pack()
+        ctk.CTkLabel(rail, text="PSP 2 PS4 AIO", font=F(15, "bold"))\
+            .pack(pady=(8, 0))
+        ctk.CTkLabel(rail, text="BUILDER  ·  v2.6", font=F(9),
+                     text_color=TEXT_FAINT).pack(pady=(2, 22))
+
+        self._nav(rail, "game",   "🎮", "Build PKG",      lambda: self.show_page("game"))
+        self._nav(rail, "manual", "🛠", "Manual Builder", lambda: self.show_page("manual"))
+
+        ctk.CTkFrame(rail, fg_color=BORDER, height=1)\
+            .pack(fill="x", padx=18, pady=(18, 14))
+
+        side_link = lambda t, c: ghost(rail, t, c, height=34)\
+            .pack(fill="x", padx=14, pady=3)
+        side_link("⬇  Framework 5.0", self.open_framework)
+        side_link("🧹 Cleanup work dir", self.cleanup_workdir)
+
+        ctk.CTkLabel(rail, text="All PKG lists are scanned\nfrom disk at startup.",
+                     font=F(9), text_color=TEXT_FAINT, justify="center")\
+            .pack(side="bottom", pady=18)
+
+    def _nav(self, parent, key, icon, label, command):
+        b = ctk.CTkButton(parent, text=f"{icon}   {label}", command=command,
+                          height=42, anchor="w", corner_radius=10,
+                          font=F(13), border_width=0)
+        b.pack(fill="x", padx=14, pady=3)
+        self.nav_buttons[key] = b
+
+    def _set_active_nav(self, key):
+        for k, b in self.nav_buttons.items():
+            if k == key:
+                b.configure(fg_color=SELECT, text_color=ACCENT_HI,
+                            hover_color=SELECT)
+            else:
+                b.configure(fg_color="transparent", text_color=TEXT_DIM,
+                            hover_color=SURFACE_3)
+
+    def _build_header(self):
+        hdr = ctk.CTkFrame(self, corner_radius=0, fg_color=BG, height=64)
+        hdr.grid(row=0, column=1, sticky="ew")
+        hdr.grid_propagate(False)
+        hdr.grid_columnconfigure(0, weight=1)
+
+        left = ctk.CTkFrame(hdr, fg_color="transparent")
+        left.grid(row=0, column=0, sticky="w", padx=20)
+        ctk.CTkLabel(left, text="Build PSP Game PKG",
+                     font=F(19, "bold"), anchor="w").pack(side="left")
+        ctk.CTkLabel(left, text="Turn a PSP .ISO into a PS4-installable PKG.",
+                     font=F(11), text_color=TEXT_DIM, anchor="w")\
+            .pack(side="left", padx=(14, 0), pady=(5, 0))
+
+        # base status pill (right side of header)
+        self.hdr_status = ctk.CTkLabel(
+            hdr, text="●  Base not extracted",
+            font=F(11, "bold"), text_color=DANGER,
+            fg_color=SURFACE, corner_radius=20,
+            padx=16, height=34)
+        self.hdr_status.grid(row=0, column=1, sticky="e", padx=20)
+
+        ctk.CTkFrame(self, fg_color=BORDER, height=1)\
+            .grid(row=1, column=1, sticky="ew")
 
     def _build_log_panel(self):
-        self.log_panel = ctk.CTkFrame(self, fg_color="#121214",
-                                      corner_radius=0, height=150)
-        self.log_panel.grid(row=1, column=1, sticky="ew")
+        self.log_panel = ctk.CTkFrame(self, fg_color=SIDEBAR,
+                                      corner_radius=0, height=160)
+        self.log_panel.grid(row=3, column=1, sticky="ew")
         self.log_panel.grid_propagate(False)
         self.log_panel.grid_columnconfigure(0, weight=1)
         self.log_panel.grid_rowconfigure(1, weight=1)
 
-        head = ctk.CTkFrame(self.log_panel, fg_color="#1c1c20",
-                            height=28, corner_radius=0)
-        head.grid(row=0, column=0, sticky="ew")
+        head = ctk.CTkFrame(self.log_panel, fg_color="transparent", height=32)
+        head.grid(row=0, column=0, sticky="ew", padx=10)
         head.grid_propagate(False)
 
-        ctk.CTkLabel(head, text="  LOG",
-                     font=ctk.CTkFont(size=11, weight="bold"),
-                     text_color="#c8c8d0").pack(side="left", padx=6)
+        ctk.CTkLabel(head, text="◈ TERMINAL",
+                     font=F(10, "bold"), text_color=TEXT_FAINT)\
+            .pack(side="left", padx=6)
 
-        ctk.CTkButton(head, text="🗑 Clear", width=70, height=22,
-                      fg_color="transparent", border_width=1,
-                      font=ctk.CTkFont(size=10),
-                      command=self.clear_log).pack(side="right", padx=6, pady=3)
-
-        self.collapse_btn = ctk.CTkButton(
-            head, text="▼ Collapse", width=90, height=22,
-            fg_color="transparent", border_width=1,
-            font=ctk.CTkFont(size=10),
-            command=self.toggle_log)
-        self.collapse_btn.pack(side="right", padx=(0, 4), pady=3)
+        ghost(head, "🗑 Clear", self.clear_log, width=76, height=24)\
+            .pack(side="right", padx=4, pady=4)
+        self.collapse_btn = ghost(head, "▼ Collapse", self.toggle_log,
+                                  width=92, height=24)
+        self.collapse_btn.pack(side="right", padx=4, pady=4)
 
         self.log_box = ctk.CTkTextbox(
             self.log_panel, wrap="word",
-            font=ctk.CTkFont(family="Consolas", size=11),
-            fg_color="#121214", text_color="#c8e6c9",
-            border_width=0)
-        self.log_box.grid(row=1, column=0, sticky="nsew", padx=6, pady=(2, 4))
+            font=F(11, family=FONT_MONO),
+            fg_color=SIDEBAR, text_color="#b9c8b9",
+            border_width=0, corner_radius=0)
+        self.log_box.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 8))
         self.log_box.configure(state="disabled")
+        for tag, col in (("ok", SUCCESS), ("err", DANGER), ("warn", WARN),
+                         ("phase", ACCENT_HI), ("dim", TEXT_FAINT)):
+            self.log_box.tag_config(tag, foreground=col)
 
-    def _build_bottom_bar(self):
-        bar = ctk.CTkFrame(self, fg_color="#161619",
-                           corner_radius=0, height=60)
-        bar.grid(row=2, column=1, sticky="ew")
+    def _build_build_bar(self):
+        bar = ctk.CTkFrame(self, fg_color=SURFACE, corner_radius=0, height=68)
+        bar.grid(row=4, column=1, sticky="ew")
         bar.grid_propagate(False)
         bar.grid_columnconfigure(0, weight=1)
 
+        ctk.CTkFrame(self, fg_color=BORDER, height=1)\
+            .grid(row=4 - 1, column=1, sticky="ew")  # hairline above log handled below
+
+        out_wrap = ctk.CTkFrame(bar, fg_color="transparent")
+        out_wrap.grid(row=0, column=0, sticky="ew", padx=(20, 10), pady=14)
+        ctk.CTkLabel(out_wrap, text="OUTPUT", font=F(9, "bold"),
+                     text_color=TEXT_FAINT).pack(anchor="w")
+        self.output_preview_bar = ctk.CTkLabel(
+            out_wrap, text="—", font=F(12, family=FONT_MONO),
+            text_color=TEXT_DIM, anchor="w")
+        self.output_preview_bar.pack(anchor="w")
+
+        ghost(bar, "📂  Open output", lambda: self.open_folder(OUTPUT_DIR),
+              width=130, height=42)\
+            .grid(row=0, column=1, padx=(0, 10), pady=13)
+
         self.build_btn = ctk.CTkButton(
-            bar, text="🚀  BUILD PKG", height=42,
-            font=ctk.CTkFont(size=15, weight="bold"),
+            bar, text="🚀   BUILD PKG", height=42, width=210,
+            font=F(14, "bold"), corner_radius=12,
+            fg_color=ACCENT, hover_color=ACCENT_HI, text_color=ACCENT_ON,
             command=self.do_build)
-        self.build_btn.grid(row=0, column=0, sticky="ew",
-                            padx=(12, 6), pady=9)
-        ctk.CTkButton(bar, text="📂", width=48, height=42,
-                      fg_color="transparent", border_width=1,
-                      command=lambda: self.open_folder(OUTPUT_DIR))\
-            .grid(row=0, column=1, padx=(0, 12), pady=9)
+        self.build_btn.grid(row=0, column=2, padx=(0, 20), pady=13)
 
     def toggle_log(self):
         self.log_collapsed = not self.log_collapsed
         if self.log_collapsed:
-            self.log_panel.configure(height=32)
+            self.log_panel.configure(height=34)
             self.log_box.grid_remove()
             self.collapse_btn.configure(text="▲ Expand")
         else:
-            self.log_panel.configure(height=150)
+            self.log_panel.configure(height=160)
             self.log_box.grid()
             self.collapse_btn.configure(text="▼ Collapse")
 
     def _apply_window_size(self):
         self.update_idletasks()
-        sw = self.winfo_screenwidth()
-        sh = self.winfo_screenheight()
-        win_w = min(1180, sw - 100)
-        win_h = min(820, sh - 140)
-        win_w = max(win_w, 900)
-        win_h = max(win_h, 600)
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        win_w = max(1120, min(1280, sw - 120))
+        win_h = max(740, min(880, sh - 140))
         x = max(0, (sw - win_w) // 2)
-        y = max(0, (sh - win_h) // 2 - 20)
+        y = max(0, (sh - win_h) // 2 - 30)
         self.geometry(f"{win_w}x{win_h}+{x}+{y}")
-        self.minsize(900, 600)
+        self.minsize(1120, 740)
 
     def show_page(self, name):
+        self._set_active_nav(name)
         for p in self.pages.values():
             p.pack_forget()
         self.pages[name].pack(fill="both", expand=True)
 
-    # ------------------------------------------------------- game page
+    # ============================================================ game page
     def _build_game_page(self):
-        page = ctk.CTkFrame(self.content, corner_radius=0, fg_color=COL_BG)
+        page = ctk.CTkFrame(self.content, corner_radius=0, fg_color=BG)
         self.pages["game"] = page
         page.grid_rowconfigure(0, weight=1)
-        page.grid_columnconfigure(0, weight=1)   # left cards
-        page.grid_columnconfigure(1, weight=0, minsize=340)  # right status
+        page.grid_columnconfigure(0, weight=1)              # step cards
+        page.grid_columnconfigure(1, weight=0, minsize=308) # summary rail
 
-        # --- LEFT column (scrolls) ---
-        left = ctk.CTkScrollableFrame(
-            page, corner_radius=0, fg_color=COL_BG,
-            scrollbar_button_color="#3a3a42",
-            scrollbar_button_hover_color="#505058")
-        left.grid(row=0, column=0, sticky="nsew", padx=(8, 4), pady=8)
-        left.grid_columnconfigure(0, weight=1)
-        self.left_col = left
-
-        hdr = ctk.CTkFrame(left, fg_color="transparent")
-        hdr.grid(row=0, column=0, sticky="ew", padx=6, pady=(0, 4))
-        ctk.CTkLabel(hdr, text="Build PSP Game PKG",
-                     font=ctk.CTkFont(size=22, weight="bold"),
-                     anchor="w").pack(anchor="w")
-        ctk.CTkLabel(hdr, text="Turn a PSP .ISO into a PS4-installable PKG.",
-                     font=ctk.CTkFont(size=11),
-                     text_color=COL_TEXT_DIM, anchor="w").pack(anchor="w")
-
-        mode_frame = ctk.CTkFrame(left, fg_color="transparent")
-        mode_frame.grid(row=1, column=0, sticky="ew", padx=6, pady=(6, 4))
+        # mode switch row (sits above cards, below header)
+        mode_row = ctk.CTkFrame(page, fg_color="transparent", height=44)
+        mode_row.grid(row=0, column=0, columnspan=2, sticky="new",
+                      padx=(16, 16), pady=(12, 0))
+        mode_row.grid_propagate(False)
         self.mode_var = tk.StringVar(value="Game PKG")
         ctk.CTkSegmentedButton(
-            mode_frame,
+            mode_row,
             values=["Game PKG", "Emulator PKG"],
             variable=self.mode_var,
             command=lambda v: self._on_mode_change(),
-            height=34).pack(fill="x")
-
-        # Card 1
-        c1 = Card(left, "1", "Base PKG",
-                  "Pick the emulator PKG used as the base")
-        c1.grid(row=2, column=0, sticky="ew", padx=6, pady=6)
-
-        ctk.CTkLabel(c1.body, text="Available PKGs",
-                     font=ctk.CTkFont(size=11, weight="bold"),
-                     anchor="w").pack(anchor="w")
-
-        toolbar = ctk.CTkFrame(c1.body, fg_color="transparent")
-        toolbar.pack(fill="x", pady=(0, 6))
-        ctk.CTkButton(toolbar, text="📂 base_pkgs/", width=120,
-                      fg_color="transparent", border_width=1,
-                      command=lambda: self.open_folder(BASE_PKGS_DIR))\
-            .pack(side="left", padx=(0, 4))
-        ctk.CTkButton(toolbar, text="📂 official_pkgs/", width=130,
-                      fg_color="transparent", border_width=1,
-                      command=lambda: self.open_folder(OFFICIAL_DIR))\
-            .pack(side="left", padx=(0, 4))
-        ctk.CTkButton(toolbar, text="↻ Rescan", width=90,
-                      command=self.rescan_pkgs)\
-            .pack(side="right")
-
-        self.pkg_list = PkgList(c1.body, on_select=self._on_pkg_select, height=200)
-        self.pkg_list.pack(fill="x", pady=(4, 6))
-
-        status = ctk.CTkFrame(c1.body, fg_color="transparent")
-        status.pack(fill="x", pady=(4, 0))
-        self.base_status = ctk.CTkLabel(status, text="● Not extracted",
-                                        text_color=COL_DANGER,
-                                        font=ctk.CTkFont(size=11, weight="bold"))
-        self.base_status.pack(side="left")
-
-        btn_row = ctk.CTkFrame(c1.body, fg_color="transparent")
-        btn_row.pack(fill="x", pady=(6, 0))
-        ctk.CTkButton(btn_row, text="🔍 Preview base", width=130,
-                      fg_color="transparent", border_width=1,
-                      command=self.preview_base)\
-            .pack(side="left", padx=(0, 6))
-        ctk.CTkButton(btn_row, text="Extract Base PKG", width=150,
-                      command=self.force_extract_base)\
+            height=36, corner_radius=10,
+            fg_color=SURFACE_2, selected_color=SELECT,
+            selected_hover_color=SELECT, unselected_color=SURFACE_2,
+            unselected_hover_color=SURFACE_3, text_color=TEXT)\
             .pack(side="left")
 
-        # Card 2
-        c2 = Card(left, "2", "Overrides (optional)",
-                  "overrides/ overwrites the extracted base")
-        c2.grid(row=3, column=0, sticky="ew", padx=6, pady=6)
+        # --- LEFT: scrolling step cards (offset below mode row) ---
+        left = ctk.CTkScrollableFrame(
+            page, corner_radius=0, fg_color=BG,
+            scrollbar_button_color=BORDER,
+            scrollbar_button_hover_color=BORDER_LT)
+        left.grid(row=0, column=0, sticky="nsew", padx=(16, 8), pady=(64, 12))
+        left.grid_columnconfigure(0, weight=1)
+
+        # Card 1 — Base PKG
+        c1 = Card(left, "1", "Base PKG", "emulator base for the build")
+        c1.grid(row=0, column=0, sticky="ew", pady=(0, 12))
+
+        toolbar = ctk.CTkFrame(c1.body, fg_color="transparent")
+        toolbar.pack(fill="x", pady=(2, 8))
+        ghost(toolbar, "📂 base_pkgs/", lambda: self.open_folder(BASE_PKGS_DIR),
+              width=128).pack(side="left", padx=(0, 6))
+        ghost(toolbar, "📂 official_pkgs/", lambda: self.open_folder(OFFICIAL_DIR),
+              width=142).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(toolbar, text="↻ Rescan", width=92,
+                      height=32, corner_radius=RADIUS_SM,
+                      fg_color=SURFACE_3, hover_color=BORDER_LT,
+                      text_color=TEXT, font=F(12),
+                      command=self.rescan_pkgs).pack(side="right")
+
+        self.pkg_list = PkgList(c1.body, on_select=self._on_pkg_select, height=196)
+        self.pkg_list.pack(fill="x", pady=(0, 10))
+
+        btn_row = ctk.CTkFrame(c1.body, fg_color="transparent")
+        btn_row.pack(fill="x")
+        ghost(btn_row, "🔍 Preview base", self.preview_base, width=138)\
+            .pack(side="left", padx=(0, 8))
+        ctk.CTkButton(btn_row, text="⬇  Extract Base PKG", width=168, height=34,
+                      corner_radius=RADIUS_SM, font=F(12, "bold"),
+                      fg_color=SELECT, hover_color=BORDER_LT,
+                      text_color=ACCENT_HI, command=self.force_extract_base)\
+            .pack(side="left")
+
+        # Card 2 — Overrides
+        c2 = Card(left, "2", "Overrides", "optional")
+        c2.grid(row=1, column=0, sticky="ew", pady=(0, 12))
         self.use_overrides = tk.BooleanVar(value=False)
         row2 = ctk.CTkFrame(c2.body, fg_color="transparent")
         row2.pack(fill="x")
-        ctk.CTkCheckBox(row2, text="Copy files from overrides/",
-                        variable=self.use_overrides).pack(side="left")
-        ctk.CTkButton(row2, text="📂 Open", width=80,
-                      fg_color="transparent", border_width=1,
-                      command=lambda: self.open_folder(OVERRIDES_DIR))\
+        ctk.CTkCheckBox(row2, text="Copy files from overrides/ into the base",
+                        variable=self.use_overrides, font=F(12),
+                        fg_color=ACCENT, hover_color=ACCENT_HI)\
+            .pack(side="left")
+        ghost(row2, "📂 Open", lambda: self.open_folder(OVERRIDES_DIR), width=84)\
             .pack(side="right")
-        ctk.CTkLabel(c2.body,
-                     text="⚠️  Files here OVERWRITE the base.",
-                     text_color=COL_WARNING,
-                     font=ctk.CTkFont(size=10), anchor="w")\
-            .pack(anchor="w", pady=(4, 0))
 
-        # Card 3
-        self.c3 = Card(left, "3", "Game ISO",
-                       "Pick your PSP game's .ISO file")
-        self.c3.grid(row=4, column=0, sticky="ew", padx=6, pady=6)
+        # Card 3 — Game ISO
+        self.c3 = Card(left, "3", "Game ISO", "your PSP game image")
+        self.c3.grid(row=2, column=0, sticky="ew", pady=(0, 12))
         self.iso_label = ctk.CTkLabel(self.c3.body, text="No ISO selected",
-                                      text_color=COL_DANGER, anchor="w")
-        self.iso_label.pack(anchor="w", pady=2)
+                                      font=F(12), text_color=DANGER, anchor="w")
+        self.iso_label.pack(anchor="w", pady=(2, 8))
         row3 = ctk.CTkFrame(self.c3.body, fg_color="transparent")
-        row3.pack(fill="x", pady=4)
-        ctk.CTkButton(row3, text="Browse ISO...", width=140,
-                      command=self.pick_iso).pack(side="left")
-        ctk.CTkButton(row3, text="📂 game_dlc/", width=120,
-                      fg_color="transparent", border_width=1,
-                      command=lambda: self.open_folder(DLC_DIR))\
+        row3.pack(fill="x")
+        ctk.CTkButton(row3, text="Browse ISO…", width=140, height=34,
+                      corner_radius=RADIUS_SM, font=F(12, "bold"),
+                      fg_color=SURFACE_3, hover_color=BORDER_LT,
+                      text_color=TEXT, command=self.pick_iso).pack(side="left")
+        ghost(row3, "📂 game_dlc/", lambda: self.open_folder(DLC_DIR), width=126)\
             .pack(side="right")
         self.output_preview = ctk.CTkLabel(self.c3.body, text="",
-                                           font=ctk.CTkFont(size=11),
-                                           text_color=COL_SUCCESS, anchor="w")
-        self.output_preview.pack(anchor="w", pady=(4, 0))
+                                           font=F(11, family=FONT_MONO),
+                                           text_color=SUCCESS, anchor="w")
+        self.output_preview.pack(anchor="w", pady=(10, 0))
 
-        # Card 4
+        # Card 4 — Decrypt method
         self.c4 = Card(left, "4", "Decrypt Method")
-        self.c4.grid(row=5, column=0, sticky="ew", padx=6, pady=6)
+        self.c4.grid(row=3, column=0, sticky="ew", pady=(0, 12))
         self.decrypt_var = tk.IntVar(value=1)
-        ctk.CTkRadioButton(self.c4.body,
-                           text="Decrypt & rebuild ISO  — safest",
-                           variable=self.decrypt_var, value=1)\
-            .pack(anchor="w", pady=2)
-        ctk.CTkRadioButton(self.c4.body,
-                           text="Swap EBOOT  — fallback if decrypt fails",
-                           variable=self.decrypt_var, value=2)\
-            .pack(anchor="w", pady=2)
-        ctk.CTkRadioButton(self.c4.body,
-                           text="Skip  — assume already decrypted (fast, may not work)",
-                           variable=self.decrypt_var, value=3)\
-            .pack(anchor="w", pady=2)
+        for txt, val in (("Decrypt & rebuild ISO — safest", 1),
+                         ("Swap EBOOT — fallback if decrypt fails", 2),
+                         ("Skip — assume already decrypted (fast, may not work)", 3)):
+            ctk.CTkRadioButton(self.c4.body, text=txt, variable=self.decrypt_var,
+                               value=val, font=F(12),
+                               fg_color=ACCENT, hover_color=ACCENT_HI)\
+                .pack(anchor="w", pady=3)
 
-        # Card 5
-        self.c5 = Card(left, "5", "Emulator Options",
-                       "Loaded from emulator_options.json")
-        self.c5.grid(row=6, column=0, sticky="ew", padx=6, pady=6)
+        # Card 5 — Emulator options
+        self.c5 = Card(left, "5", "Emulator Options", "from emulator_options.json")
+        self.c5.grid(row=4, column=0, sticky="ew", pady=(0, 12))
         self.schema_form = SchemaForm(self.c5.body, self.schema)
 
-        # Card 6
-        self.c6 = Card(left, "6", "Icon / Background")
-        self.c6.grid(row=7, column=0, sticky="ew", padx=6, pady=6)
+        # Card 6 — Icons
+        self.c6 = Card(left, "6", "Icon / Background", "optional")
+        self.c6.grid(row=5, column=0, sticky="ew")
         self.icon_var = tk.IntVar(value=2)
         ctk.CTkRadioButton(self.c6.body, text="Use default icons",
-                           variable=self.icon_var, value=2)\
-            .pack(anchor="w", pady=2)
+                           variable=self.icon_var, value=2, font=F(12),
+                           fg_color=ACCENT, hover_color=ACCENT_HI)\
+            .pack(anchor="w", pady=3)
         ctk.CTkLabel(self.c6.body,
-                     text="(tools/pic/icon0.png, pic1.png, save_data.png)",
-                     text_color=COL_TEXT_DIM,
-                     font=ctk.CTkFont(size=10), anchor="w")\
-            .pack(anchor="w", padx=24)
+                     text="tools/pic/icon0.png · pic1.png · save_data.png",
+                     font=F(10), text_color=TEXT_FAINT, anchor="w")\
+            .pack(anchor="w", padx=26)
         ctk.CTkRadioButton(self.c6.body, text="Set custom icon / background",
-                           variable=self.icon_var, value=1)\
-            .pack(anchor="w", pady=(6, 2))
+                           variable=self.icon_var, value=1, font=F(12),
+                           fg_color=ACCENT, hover_color=ACCENT_HI)\
+            .pack(anchor="w", pady=(8, 3))
 
         row6 = ctk.CTkFrame(self.c6.body, fg_color="transparent")
-        row6.pack(fill="x", padx=24, pady=2)
-        ctk.CTkButton(row6, text="Choose Icon...", width=140,
-                      command=self.pick_icon).pack(side="left", padx=(0, 8))
-        self.icon_label = ctk.CTkLabel(row6, text="(none)",
-                                       text_color=COL_TEXT_DIM, anchor="w")
+        row6.pack(fill="x", padx=26, pady=2)
+        ctk.CTkButton(row6, text="Choose Icon…", width=140, height=32,
+                      corner_radius=RADIUS_SM, font=F(12),
+                      fg_color=SURFACE_3, hover_color=BORDER_LT,
+                      text_color=TEXT, command=self.pick_icon)\
+            .pack(side="left", padx=(0, 10))
+        self.icon_label = ctk.CTkLabel(row6, text="(none)", font=F(11),
+                                       text_color=TEXT_FAINT, anchor="w")
         self.icon_label.pack(side="left")
 
         row6b = ctk.CTkFrame(self.c6.body, fg_color="transparent")
-        row6b.pack(fill="x", padx=24, pady=2)
-        ctk.CTkButton(row6b, text="Choose Boot Image...", width=160,
-                      command=self.pick_boot).pack(side="left", padx=(0, 8))
-        self.boot_label = ctk.CTkLabel(row6b, text="(none)",
-                                       text_color=COL_TEXT_DIM, anchor="w")
+        row6b.pack(fill="x", padx=26, pady=2)
+        ctk.CTkButton(row6b, text="Choose Boot Image…", width=160, height=32,
+                      corner_radius=RADIUS_SM, font=F(12),
+                      fg_color=SURFACE_3, hover_color=BORDER_LT,
+                      text_color=TEXT, command=self.pick_boot)\
+            .pack(side="left", padx=(0, 10))
+        self.boot_label = ctk.CTkLabel(row6b, text="(none)", font=F(11),
+                                       text_color=TEXT_FAINT, anchor="w")
         self.boot_label.pack(side="left")
 
-        ctk.CTkFrame(left, fg_color="transparent", height=6)\
-            .grid(row=8, column=0)
-
-        # --- RIGHT column (fixed) ---
-        right = ctk.CTkFrame(page, fg_color=COL_CARD, corner_radius=10,
-                             border_width=1, border_color=COL_BORDER)
-        right.grid(row=0, column=1, sticky="nsew", padx=(4, 8), pady=8)
+        # --- RIGHT: summary rail ---
+        right = ctk.CTkFrame(page, fg_color=SURFACE, corner_radius=RADIUS,
+                             border_width=1, border_color=BORDER)
+        right.grid(row=0, column=1, sticky="nsew", padx=(8, 16), pady=(64, 12))
         right.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(right, text="Progress",
-                     font=ctk.CTkFont(size=12, weight="bold"),
-                     anchor="w")\
-            .grid(row=0, column=0, sticky="ew", padx=14, pady=(14, 4))
-        self.progress = ctk.CTkProgressBar(right, height=10,
-                                           progress_color=COL_ACCENT)
-        self.progress.grid(row=1, column=0, sticky="ew", padx=14)
+        ctk.CTkLabel(right, text="BUILD SUMMARY", font=F(10, "bold"),
+                     text_color=TEXT_FAINT, anchor="w")\
+            .grid(row=0, column=0, sticky="ew", padx=16, pady=(16, 8))
+
+        self.progress = ctk.CTkProgressBar(right, height=8,
+                                           progress_color=ACCENT,
+                                           fg_color=SURFACE_3,
+                                           corner_radius=6)
+        self.progress.grid(row=1, column=0, sticky="ew", padx=16)
         self.progress.set(0)
-        self.phase_label = ctk.CTkLabel(right, text="Idle",
-                                        font=ctk.CTkFont(size=11),
-                                        text_color=COL_TEXT_DIM,
-                                        anchor="w")
-        self.phase_label.grid(row=2, column=0, sticky="ew", padx=14, pady=(4, 12))
+        self.phase_label = ctk.CTkLabel(right, text="Idle", font=F(11),
+                                        text_color=TEXT_DIM, anchor="w")
+        self.phase_label.grid(row=2, column=0, sticky="ew", padx=16, pady=(6, 0))
 
-        sep = ctk.CTkFrame(right, fg_color=COL_BORDER, height=1)
-        sep.grid(row=3, column=0, sticky="ew", padx=14, pady=(0, 12))
+        sep = ctk.CTkFrame(right, fg_color=BORDER, height=1)
+        sep.grid(row=3, column=0, sticky="ew", padx=16, pady=(14, 12))
 
-        ctk.CTkLabel(right, text="Status",
-                     font=ctk.CTkFont(size=12, weight="bold"),
-                     anchor="w")\
-            .grid(row=4, column=0, sticky="ew", padx=14, pady=(0, 4))
-
-        def kv(parent, row, k, v):
-            ctk.CTkLabel(parent, text=k, text_color=COL_TEXT_DIM,
-                         font=ctk.CTkFont(size=10), anchor="w")\
-                .grid(row=row, column=0, sticky="w", padx=14)
-            lbl = ctk.CTkLabel(parent, text=v or "—",
-                               font=ctk.CTkFont(size=11), anchor="w")
-            lbl.grid(row=row, column=1, sticky="w", padx=(0, 14))
+        def kv(parent, row, k):
+            ctk.CTkLabel(parent, text=k, font=F(10), text_color=TEXT_FAINT,
+                         anchor="w").grid(row=row, column=0, sticky="nw",
+                                          padx=(16, 8), pady=3)
+            lbl = ctk.CTkLabel(parent, text="—", font=F(11), anchor="w",
+                               wraplength=190, justify="left")
+            lbl.grid(row=row, column=1, sticky="w", padx=(0, 16), pady=3)
             return lbl
 
         right.grid_columnconfigure(1, weight=1)
-        self.status_base = kv(right, 5, "Base:", "—")
-        self.status_iso = kv(right, 6, "ISO:", "—")
-        self.status_out = kv(right, 7, "Output:", "—")
+        self.status_base = kv(right, 4, "BASE")
+        self.status_iso = kv(right, 5, "ISO")
+        self.status_out = kv(right, 6, "OUTPUT")
 
-        sep2 = ctk.CTkFrame(right, fg_color=COL_BORDER, height=1)
-        sep2.grid(row=8, column=0, columnspan=2, sticky="ew",
-                  padx=14, pady=(12, 12))
+        sep2 = ctk.CTkFrame(right, fg_color=BORDER, height=1)
+        sep2.grid(row=7, column=0, columnspan=2, sticky="ew",
+                  padx=16, pady=(12, 12))
 
-        ctk.CTkButton(right, text="📂 output_pkgs/",
-                      fg_color="transparent", border_width=1,
-                      command=lambda: self.open_folder(OUTPUT_DIR))\
-            .grid(row=9, column=0, columnspan=2, sticky="ew",
-                  padx=14, pady=3)
-        ctk.CTkButton(right, text="📂 base_pkgs/",
-                      fg_color="transparent", border_width=1,
-                      command=lambda: self.open_folder(BASE_PKGS_DIR))\
-            .grid(row=10, column=0, columnspan=2, sticky="ew",
-                  padx=14, pady=3)
-        ctk.CTkButton(right, text="📂 official_pkgs/",
-                      fg_color="transparent", border_width=1,
-                      command=lambda: self.open_folder(OFFICIAL_DIR))\
-            .grid(row=11, column=0, columnspan=2, sticky="ew",
-                  padx=14, pady=3)
-        ctk.CTkButton(right, text="📂 overrides/",
-                      fg_color="transparent", border_width=1,
-                      command=lambda: self.open_folder(OVERRIDES_DIR))\
-            .grid(row=12, column=0, columnspan=2, sticky="ew",
-                  padx=14, pady=3)
-        ctk.CTkButton(right, text="📂 game_dlc/",
-                      fg_color="transparent", border_width=1,
-                      command=lambda: self.open_folder(DLC_DIR))\
-            .grid(row=13, column=0, columnspan=2, sticky="ew",
-                  padx=14, pady=(3, 14))
+        ctk.CTkLabel(right, text="QUICK OPEN", font=F(10, "bold"),
+                     text_color=TEXT_FAINT, anchor="w")\
+            .grid(row=8, column=0, columnspan=2, sticky="ew",
+                  padx=16, pady=(0, 8))
 
-    # ------------------------------------------------------- manual page
+        grid_btns = ctk.CTkFrame(right, fg_color="transparent")
+        grid_btns.grid(row=9, column=0, columnspan=2, sticky="ew",
+                       padx=16, pady=(0, 16))
+        grid_btns.grid_columnconfigure((0, 1), weight=1)
+        quick = [("📦 output", OUTPUT_DIR), ("🧱 base_pkgs", BASE_PKGS_DIR),
+                 ("🏛 official", OFFICIAL_DIR), ("🔧 overrides", OVERRIDES_DIR),
+                 ("🎴 game_dlc", DLC_DIR), ("🗂 image0", IMAGE0_DIR)]
+        for i, (label, path) in enumerate(quick):
+            ghost(grid_btns, label, lambda p=path: self.open_folder(p),
+                  height=34).grid(row=i // 2, column=i % 2, sticky="ew",
+                                  padx=(0, 6) if i % 2 == 0 else (6, 0),
+                                  pady=3)
+
+        # base status (also mirrored into header pill)
+        self.base_status = self.hdr_status
+
+    # ============================================================ manual page
     def _build_manual_page(self):
-        page = ctk.CTkFrame(self.content, corner_radius=0, fg_color=COL_BG)
+        page = ctk.CTkFrame(self.content, corner_radius=0, fg_color=BG)
         self.pages["manual"] = page
         page.grid_columnconfigure(0, weight=1)
-        page.grid_rowconfigure(3, weight=1)
-
-        ctk.CTkLabel(page, text="Manual PKG Builder",
-                     font=ctk.CTkFont(size=22, weight="bold"),
-                     anchor="w").grid(row=0, column=0, sticky="ew",
-                                      padx=20, pady=(16, 2))
-        ctk.CTkLabel(page,
-                     text="Advanced. Put anything in tools/image0/ then build.",
-                     font=ctk.CTkFont(size=11),
-                     text_color=COL_TEXT_DIM,
-                     wraplength=780, justify="left", anchor="w")\
-            .grid(row=1, column=0, sticky="ew", padx=20)
+        page.grid_rowconfigure(1, weight=1)
 
         toolbar = ctk.CTkFrame(page, fg_color="transparent")
-        toolbar.grid(row=2, column=0, sticky="ew", padx=20, pady=10)
-        ctk.CTkButton(toolbar, text="Open tools/image0/",
-                      fg_color="transparent", border_width=1,
-                      command=lambda: self.open_folder(IMAGE0_DIR))\
+        toolbar.grid(row=0, column=0, sticky="ew", padx=20, pady=(16, 10))
+        ctk.CTkLabel(toolbar, text="Manual PKG Builder", font=F(18, "bold"))\
             .pack(side="left")
-        ctk.CTkButton(toolbar, text="🚀  BUILD output_pkgs/manual.pkg",
-                      command=self.do_manual_build).pack(side="left", padx=8)
+        ctk.CTkLabel(toolbar,
+                     text="Advanced — put anything in tools/image0/, then build.",
+                     font=F(11), text_color=TEXT_DIM)\
+            .pack(side="left", padx=(14, 0), pady=(4, 0))
+        ghost(toolbar, "📂 Open tools/image0/",
+              lambda: self.open_folder(IMAGE0_DIR), width=160, height=36)\
+            .pack(side="right", padx=6)
+        ctk.CTkButton(toolbar, text="🚀  Build manual.pkg", width=190, height=36,
+                      corner_radius=RADIUS_SM, font=F(12, "bold"),
+                      fg_color=ACCENT, hover_color=ACCENT_HI,
+                      text_color=ACCENT_ON, command=self.do_manual_build)\
+            .pack(side="right")
 
         self.manual_log = ctk.CTkTextbox(page, wrap="word",
-                                         font=ctk.CTkFont(family="Consolas", size=11),
-                                         fg_color="#121214",
-                                         text_color="#c8e6c9")
-        self.manual_log.grid(row=3, column=0, sticky="nsew",
+                                         font=F(11, family=FONT_MONO),
+                                         fg_color=SIDEBAR, text_color="#b9c8b9",
+                                         corner_radius=RADIUS)
+        self.manual_log.grid(row=1, column=0, sticky="nsew",
                              padx=20, pady=(0, 16))
         self.manual_log.configure(state="disabled")
 
-    # ------------------------------------------------------- log
+    # ============================================================ logging
     def log(self, msg):
         self.after(0, lambda m=msg: self._log_main(m))
 
     def _log_main(self, msg):
         try:
             self.log_box.configure(state="normal")
-            self.log_box.insert("end", msg + "\n")
+            if msg.startswith("✅"):
+                tag = "ok"
+            elif msg.startswith("❌"):
+                tag = "err"
+            elif msg.startswith("⚠️"):
+                tag = "warn"
+            elif msg.startswith("---"):
+                tag = "phase"
+            elif msg.startswith("["):
+                tag = "dim"
+            else:
+                tag = None
+            self.log_box.insert("end", msg + "\n", (tag,) if tag else ())
             self.log_box.see("end")
             self.log_box.configure(state="disabled")
         except Exception:
@@ -918,7 +968,7 @@ class PSP2PS4App(ctk.CTk):
         self.log_box.delete("1.0", "end")
         self.log_box.configure(state="disabled")
 
-    # ------------------------------------------------------- progress
+    # ============================================================ progress
     def set_progress(self, pct: int, label: str = ""):
         self.after(0, lambda: self._set_progress(pct, label))
 
@@ -930,11 +980,11 @@ class PSP2PS4App(ctk.CTk):
         except Exception:
             pass
 
-    # ------------------------------------------------------- helpers
+    # ============================================================ helpers
     def ask_main(self, prompt, title="Input", integer=False,
                  minvalue=1, maxvalue=9999):
         box = {}
-        done = {"flag": False}
+        done = threading.Event()
 
         def run():
             try:
@@ -944,11 +994,10 @@ class PSP2PS4App(ctk.CTk):
                 else:
                     box["v"] = simpledialog.askstring(title, prompt)
             finally:
-                done["flag"] = True
+                done.set()
 
         self.after(0, run)
-        while not done["flag"]:
-            time.sleep(0.05)
+        done.wait()
         return box.get("v")
 
     def open_folder(self, path: Path):
@@ -974,12 +1023,13 @@ class PSP2PS4App(ctk.CTk):
                 f.unlink(missing_ok=True)
             except Exception:
                 pass
-        self.base_status.configure(text="● Not extracted", text_color=COL_DANGER)
+        self.hdr_status.configure(text="●  Base not extracted",
+                                  text_color=DANGER)
         self.status_base.configure(text="—")
         self.set_progress(0, "Idle")
         self.log("[cleanup] tools/image0 wiped.")
 
-    # ------------------------------------------------------- scan
+    # ============================================================ scan
     def rescan_pkgs(self):
         items = scan_base_pkgs()
         self.pkg_list.set_items(items)
@@ -998,7 +1048,7 @@ class PSP2PS4App(ctk.CTk):
         for c in (self.c3, self.c4, self.c5, self.c6):
             c.grid() if is_game else c.grid_remove()
         self.build_btn.configure(
-            text="🚀  BUILD PKG" if is_game else "🔨  BUILD EMULATOR PKG")
+            text="🚀   BUILD PKG" if is_game else "🔨   BUILD EMULATOR PKG")
         self._update_output_preview()
 
     def _update_output_preview(self):
@@ -1009,10 +1059,15 @@ class PSP2PS4App(ctk.CTk):
             txt = f"{safe_name(title)}_{safe_name(disc)}_{base}.pkg"
         else:
             txt = f"{base}_EMU_<TITLE_ID>.pkg"
-        self.output_preview.configure(text=f"Output: {txt}")
+        self.output_preview.configure(text=f"→ {txt}")
+        self.output_preview_bar.configure(text=txt)
         self.status_out.configure(text=txt)
 
-    # ------------------------------------------------------- pickers
+    def _set_base_ready(self, name):
+        self.hdr_status.configure(text=f"●  Ready — {name}",
+                                  text_color=SUCCESS)
+
+    # ============================================================ pickers
     def pick_iso(self):
         f = filedialog.askopenfilename(
             title="Select PSP game ISO",
@@ -1025,7 +1080,7 @@ class PSP2PS4App(ctk.CTk):
             messagebox.showerror("Bad path", str(e))
             return
         self.iso_file = p
-        self.iso_label.configure(text=str(p), text_color=COL_SUCCESS)
+        self.iso_label.configure(text=str(p), text_color=SUCCESS)
         self.status_iso.configure(text=p.name)
         threading.Thread(target=self._peek_iso, daemon=True).start()
 
@@ -1060,8 +1115,7 @@ class PSP2PS4App(ctk.CTk):
         if not f:
             return
         self.icon_file = _clean(f)
-        self.icon_label.configure(text=self.icon_file.name,
-                                  text_color=COL_SUCCESS)
+        self.icon_label.configure(text=self.icon_file.name, text_color=SUCCESS)
         self.icon_var.set(1)
 
     def pick_boot(self):
@@ -1071,13 +1125,11 @@ class PSP2PS4App(ctk.CTk):
         if not f:
             return
         self.boot_file = _clean(f)
-        self.boot_label.configure(text=self.boot_file.name,
-                                  text_color=COL_SUCCESS)
+        self.boot_label.configure(text=self.boot_file.name, text_color=SUCCESS)
         self.icon_var.set(1)
 
-    # ------------------------------------------------------- extraction
+    # ============================================================ extraction
     def preview_base(self):
-        """Extract selected base and open the folder."""
         if not self.base_pkg_path or not self.base_pkg_path.exists():
             messagebox.showwarning("No base", "Select a PKG from the list first.")
             return
@@ -1148,9 +1200,7 @@ class PSP2PS4App(ctk.CTk):
                     rmtree(d)
 
             write_lock(name)
-
-            self.after(0, lambda: self.base_status.configure(
-                text=f"● Ready  ({name})", text_color=COL_SUCCESS))
+            self.after(0, lambda: self._set_base_ready(name))
             self.set_progress(30, f"{name} extracted")
             self.log(f"✅ Base extracted: {name}")
 
@@ -1160,7 +1210,7 @@ class PSP2PS4App(ctk.CTk):
             self.log(f"❌ Extract error: {e}")
             self.set_progress(0, "Failed")
 
-    # ------------------------------------------------------- build
+    # ============================================================ build
     def do_build(self):
         if self.base_pkg_path is None:
             messagebox.showerror("No base", "Select a base PKG first.")
@@ -1174,7 +1224,6 @@ class PSP2PS4App(ctk.CTk):
             threading.Thread(target=self._build_emu_thread, daemon=True).start()
 
     def _ensure_base_extracted(self) -> bool:
-        """Auto-extract if needed. Return True if image0 is ready."""
         if image0_looks_valid() and current_extracted_base() == self.base_pkg_name:
             self.log(f"[build] base already extracted: {self.base_pkg_name}")
             return True
@@ -1228,8 +1277,7 @@ class PSP2PS4App(ctk.CTk):
                 rmtree(d)
 
         write_lock(self.base_pkg_name)
-        self.after(0, lambda: self.base_status.configure(
-            text=f"● Ready  ({self.base_pkg_name})", text_color=COL_SUCCESS))
+        self.after(0, lambda: self._set_base_ready(self.base_pkg_name))
         self.log(f"✅ Base extracted: {self.base_pkg_name}")
         return True
 
@@ -1241,7 +1289,6 @@ class PSP2PS4App(ctk.CTk):
                 self.log("❌ ISO path invalid (null byte)")
                 return
 
-            # 1) Auto-extract base if needed
             if not self._ensure_base_extracted():
                 self.set_progress(0, "Failed")
                 return
@@ -1327,7 +1374,6 @@ class PSP2PS4App(ctk.CTk):
             self._finish_pkg(out_name, disc_id, psp_name)
         except Exception as e:
             self.log(f"❌ Exception: {e}")
-            import traceback
             self.log(traceback.format_exc())
             self.set_progress(0, "Failed")
 
@@ -1526,7 +1572,7 @@ class PSP2PS4App(ctk.CTk):
         self.log(f"✅ PKG created: {final.name}  ({size_mb} MB)")
         messagebox.showinfo("Success", f"PKG created:\n{final}")
 
-    # ------------------------------------------------------- manual build
+    # ============================================================ manual build
     def do_manual_build(self):
         threading.Thread(target=self._manual_thread, daemon=True).start()
 
