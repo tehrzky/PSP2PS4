@@ -634,6 +634,7 @@ class PSP2PS4App(ctk.CTk):
         self.detected_disc_id = ""
         self.detected_title = ""
         self.schema = load_schema()
+        self._building = False
 
         self._build_ui()
         self._apply_window_size()
@@ -1052,6 +1053,10 @@ class PSP2PS4App(ctk.CTk):
 
     # ---------------------------------------------------------- build
     def do_build(self):
+        if getattr(self, "_building", False):
+            self.log("[build] already running, ignoring click")
+            return
+
         gp = self.pages["game"]
         self.log(f"[build] clicked — mode={gp.mode_var.get()} "
                  f"base={gp.base_pkg_path} iso={self.iso_file}")
@@ -1067,6 +1072,7 @@ class PSP2PS4App(ctk.CTk):
                 messagebox.showerror("No ISO", "Pick a game ISO first.")
                 return
             self.log("[build] starting thread")
+            self._building = True
             threading.Thread(target=self._build_game_thread,
                              daemon=True).start()
         else:
@@ -1076,6 +1082,7 @@ class PSP2PS4App(ctk.CTk):
                 "(example: UP9000-CUSA00000_00):")
             if not tid:
                 return
+            self._building = True
             threading.Thread(target=self._build_emu_thread,
                              args=(tid,), daemon=True).start()
 
