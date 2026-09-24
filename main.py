@@ -155,12 +155,18 @@ def read_iso_sfo(iso: Path, log):
         return "", ""
 
     C.run_cmd([str(C.SFOINFO), "i", str(sfo), str(txt)])
+
+    # ---------- FIX ----------
+    # SFOInfo.exe pads strings with null bytes. Strip them.
+    def clean(s: str) -> str:
+        return s.replace("\x00", "").strip()
+
     disc, name = "", ""
     for line in txt.read_text(encoding="utf-8", errors="ignore").splitlines():
         if line.startswith("DISC_ID"):
-            disc = line.split(":", 1)[1].strip()
+            disc = clean(line.split(":", 1)[1])
         elif line.startswith("TITLE"):
-            name = line.split(":", 1)[1].strip()
+            name = clean(line.split(":", 1)[1])
     return disc, name
 
 
