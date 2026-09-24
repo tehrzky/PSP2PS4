@@ -162,29 +162,29 @@ class PSP2PS4App(ctk.CTk):
         self.pages[name].grid(row=0, column=0, sticky="nsew")
 
     # ---------- Create Page ----------
-    def _create_create_page(self):
+        def _create_create_page(self):
         page = ctk.CTkScrollableFrame(self.content, corner_radius=0)
         self.pages["create"] = page
-        page.grid_columnconfigure(0, weight=1)
+        # NO .grid_columnconfigure here
 
         header = ctk.CTkFrame(page, fg_color="transparent")
-        header.grid(row=0, column=0, sticky="ew", pady=(10, 4))
+        header.pack(fill="x", pady=(10, 4), padx=12)
         ctk.CTkLabel(header, text="Create a PSP PKG for PS4",
                      font=ctk.CTkFont(size=22, weight="bold")).pack(anchor="w")
         ctk.CTkLabel(header, text="Play the PSP in full HD on your PS4",
                      font=ctk.CTkFont(size=12)).pack(anchor="w")
 
-        # Step 1: Emulator
+        # Step 1
         s1 = self._section(page, "1. Select Emulator", "Choose the emulator package to use as base")
         self.emu_var = tk.StringVar(value=list(EMULATORS.keys())[0])
         for name in EMULATORS:
             ctk.CTkRadioButton(s1, text=name, variable=self.emu_var, value=name).pack(anchor="w", pady=2)
 
-        # Step 2: Extract
+        # Step 2
         s2 = self._section(page, "2. Extract Emulator", "Extracts the selected emulator into tools/image0")
         ctk.CTkButton(s2, text="Extract Emulator", command=self.do_extract_emulator).pack(anchor="w", pady=6)
 
-        # Step 3: copy putemulatorhere?
+        # Step 3
         s3 = self._section(page, "3. Copy 'putemulatorhere' contents?",
                            "Overwrites existing files in the emulator with your custom config")
         row = ctk.CTkFrame(s3, fg_color="transparent")
@@ -195,7 +195,7 @@ class PSP2PS4App(ctk.CTk):
         ctk.CTkRadioButton(row, text="No - skip",
                            variable=self.copy_put_var, value=2).pack(side="left")
 
-        # Step 4: Builder mode
+        # Step 4
         s4 = self._section(page, "4. PSP Builder Mode", "Choose what to build")
         self.builder_var = tk.IntVar(value=1)
         ctk.CTkRadioButton(s4, text="PSP PKG Maker (game ISO)",
@@ -203,13 +203,13 @@ class PSP2PS4App(ctk.CTk):
         ctk.CTkRadioButton(s4, text="PSP Playground Launcher (manual title ID)",
                            variable=self.builder_var, value=2).pack(anchor="w", pady=2)
 
-        # Step 5: ISO selection
+        # Step 5
         s5 = self._section(page, "5. Game ISO / Title ID", "Pick your game's .ISO file")
         self.iso_label = ctk.CTkLabel(s5, text="No ISO selected", text_color="#ff8080")
         self.iso_label.pack(anchor="w", pady=4)
         ctk.CTkButton(s5, text="Browse ISO...", command=self.pick_iso).pack(anchor="w", pady=4)
 
-        # Step 6: Decrypt
+        # Step 6
         s6 = self._section(page, "6. Decrypt Method", "How to handle the EBOOT.BIN")
         self.decrypt_var = tk.IntVar(value=1)
         ctk.CTkRadioButton(s6, text="Decrypt and process game image (not for homebrew)",
@@ -219,12 +219,12 @@ class PSP2PS4App(ctk.CTk):
         ctk.CTkRadioButton(s6, text="Skip decryption and process directly (fast)",
                            variable=self.decrypt_var, value=3).pack(anchor="w", pady=2)
 
-        # Step 7: texcachemode
+        # Step 7
         s7 = self._section(page, "7. texcachemode", "Patch config-title.txt with texcachemode")
         self.tex_var = tk.StringVar(value=TEXCACHE_MODES[0])
         ctk.CTkOptionMenu(s7, values=TEXCACHE_MODES, variable=self.tex_var).pack(anchor="w", pady=4)
 
-        # Step 8: Customization
+        # Step 8
         s8 = self._section(page, "8. Game Customization", "Set icon / background")
         self.custom_var = tk.IntVar(value=2)
         ctk.CTkRadioButton(s8, text="Set an icon/background",
@@ -253,7 +253,7 @@ class PSP2PS4App(ctk.CTk):
         self.log_box = ctk.CTkTextbox(s9, height=180, wrap="word")
         self.log_box.pack(fill="both", expand=True, pady=4)
         self.log_box.configure(state="disabled")
-
+            
     # ---------- Manual Page ----------
     def _create_manual_page(self):
         page = ctk.CTkScrollableFrame(self.content, corner_radius=0)
