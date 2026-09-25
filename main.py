@@ -155,7 +155,7 @@ def make_game_folder(disc_id: str) -> Path:
         (game_dir / sub).mkdir(parents=True, exist_ok=True)
     siea = C.IMAGE0_DIR / "SIEA"
     siea.mkdir(parents=True, exist_ok=True)
-    with open(siea / "config-region.txt", "a", encoding="utf-8") as f:
+    with open(siea / "config-region.txt", "w", encoding="utf-8") as f:
         f.write(f'--active-sku="{disc_id}#v1.00"\n')
     return game_dir
 
