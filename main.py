@@ -1084,7 +1084,7 @@ class PSP2PS4App(ctk.CTk):
             messagebox.showerror("No base", "Select a base PKG first.")
             return
 
-        if gp.mode_var.get() == "Game PKG":
+        if self.mode_var.get() == "Game PKG":
             if not self.iso_file:
                 self.log("❌ No ISO selected")
                 messagebox.showerror("No ISO", "Pick a game ISO first.")
