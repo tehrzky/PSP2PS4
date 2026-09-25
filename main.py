@@ -1085,7 +1085,7 @@ class PSP2PS4App(ctk.CTk):
             return
 
         if gp.mode_var.get() == "Game PKG":
-            if not self.iso_file or not self.iso_file.exists():
+            if not self.iso_file:
                 self.log("❌ No ISO selected")
                 messagebox.showerror("No ISO", "Pick a game ISO first.")
                 return
