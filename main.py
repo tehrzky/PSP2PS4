@@ -1101,7 +1101,7 @@ class PSP2PS4App(ctk.CTk):
             tid = simpledialog.askstring(
                 "Emulator TITLE_ID",
                 "TITLE_ID for this emulator PKG\n"
-                "(example: UP9000-CUSA00000_00):")
+                "(example: PSPX00021 or SLES00939):")
             if not tid:
                 return
             self._building = True
