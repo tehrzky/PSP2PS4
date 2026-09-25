@@ -311,7 +311,11 @@ def finish_pkg(out_name: str, disc_id: str, title: str, log):
         tmp_pkg.unlink()
 
     log("Building PKG ...")
-    rc = C.run_silent([str(C.ORBIS), "img_create", str(gp4), str(tmp_pkg)])
+    rc, out = C.run_cmd([str(C.ORBIS), "img_create", str(gp4), str(tmp_pkg)])
+    if rc != 0:
+        log("[img_create] FAILED — output:")
+        for line in out.splitlines()[-30:]:  # last 30 lines
+            log(f"  {line}")
     if rc != 0 or not tmp_pkg.exists():
         log("❌ img_create failed")
         return None
@@ -839,7 +843,7 @@ class PSP2PS4App(ctk.CTk):
     def _set_build_state(self, active: bool, phase: str = ""):
         try:
             if active:
-                txt = "⏳  BUILDING…" + (f"  {phase}" if phase else "")
+                txt = f"⏳  {phase.upper()}" if phase else "⏳  BUILDING…"
                 self.build_btn.configure(
                     text=txt,
                     fg_color=SURFACE_3,
@@ -1188,8 +1192,12 @@ class PSP2PS4App(ctk.CTk):
             if not sfo.exists():
                 raise RuntimeError("param.sfo missing — extract a base first")
 
-            content_id = f"{tid}-{gp.base_pkg_name}"
-            title = f"Emu {gp.base_pkg_name}"
+            # Match the old batch's format:
+            #   TITLE_ID   = <tid>                       (e.g. PSPX00021)
+            #   CONTENT_ID = UP9000-<tid>_00-<tid>TEHRZKY
+            content_id = f"UP9000-{tid}_00-{tid}TEHRZKY"
+            title = f"PSP Emu {gp.base_pkg_name}"
+
             for k, v in [("TITLE_ID", tid),
                          ("CONTENT_ID", content_id),
                          ("TITLE", title)]:
