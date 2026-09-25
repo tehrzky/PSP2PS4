@@ -292,7 +292,7 @@ def copy_default_icons(log):
             shutil.copy2(s, sce / n)
 
 
-def finish_pkg(out_name: str, disc_id: str, title: str, log):
+def finish_pkg(out_name: str, disc_id: str, title: str, log, base_name: str = ""):
     log("Generating GP4 ...")
     C.run_cmd([str(C.GENGP4), str(C.IMAGE0_DIR)])
 
@@ -326,8 +326,14 @@ def finish_pkg(out_name: str, disc_id: str, title: str, log):
     tmp_pkg.rename(final)
 
     size_mb = final.stat().st_size // (1024 * 1024)
-    (C.OUTPUT_DIR / f"[{disc_id}] {title} ({size_mb}mb).txt")\
-        .write_text("", encoding="utf-8")
+    info_txt = C.OUTPUT_DIR / f"[{disc_id}] {title} ({size_mb}mb).txt"
+    info_txt.write_text(
+        f"TITLE_ID : {disc_id}\n"
+        f"TITLE    : {title}\n"
+        f"BASE PKG : {base_name or 'n/a'}\n"
+        f"SIZE     : {size_mb} MB\n"
+        f"FILE     : {final.name}\n",
+        encoding="utf-8")
     try:
         gp4.unlink()
     except Exception:
@@ -969,9 +975,9 @@ class PSP2PS4App(ctk.CTk):
         title = self.detected_title or "<Title>"
         base = gp.base_pkg_name or "<BasePKG>"
         if self.mode_var.get() == "Game PKG":
-            txt = f"{C.safe_name(title)}_{C.safe_name(disc)}_{base}.pkg"
+            txt = f"{C.safe_name(title)}_{C.safe_name(disc)}.pkg"
         else:
-            txt = f"{base}_EMU_<TITLE_ID>.pkg"
+            txt = f"EMU_<TITLE_ID>.pkg"
         gp.set_output_preview(txt)
         self.output_preview_bar.configure(text=txt)
 
@@ -1159,12 +1165,11 @@ class PSP2PS4App(ctk.CTk):
             else:
                 copy_default_icons(self.log)
 
-            out_name = (f"{C.safe_name(psp_name)}"
-                        f"_{C.safe_name(disc_id)}"
-                        f"_{gp.base_pkg_name}.pkg")
+            out_name = f"{C.safe_name(psp_name)}_{C.safe_name(disc_id)}.pkg"
             self.set_build_state(True, "building pkg")
             self.set_progress(80, "Building PKG…")
-            final = finish_pkg(out_name, disc_id, psp_name, self.log)
+            final = finish_pkg(out_name, disc_id, psp_name, self.log,
+                               base_name=gp.base_pkg_name)
             if final:
                 self.set_progress(100, f"Done — {final.name}")
                 self.msg_main("info", "Success", f"PKG created:\n{final}")
@@ -1206,10 +1211,11 @@ class PSP2PS4App(ctk.CTk):
             if gp.use_overrides.get():
                 apply_overrides(self.log)
 
-            out_name = f"{gp.base_pkg_name}_EMU_{C.safe_name(tid)}.pkg"
+            out_name = f"EMU_{C.safe_name(tid)}.pkg"
             self.set_build_state(True, "building pkg")
             self.set_progress(80, "Building PKG…")
-            final = finish_pkg(out_name, tid, title, self.log)
+            final = finish_pkg(out_name, tid, title, self.log,
+                               base_name=gp.base_pkg_name)
             if final:
                 self.set_progress(100, f"Done — {final.name}")
                 self.msg_main("info", "Success",
