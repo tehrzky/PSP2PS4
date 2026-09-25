@@ -818,6 +818,7 @@ class PSP2PS4App(ctk.CTk):
         self.after(0, lambda: self._set_progress(pct, label))
 
     def _set_progress(self, pct, label):
+        self._last_pct = pct
         try:
             gp = self.pages["game"]
             gp.progress.set(pct / 100.0)
@@ -830,6 +831,13 @@ class PSP2PS4App(ctk.CTk):
     def set_build_state(self, active: bool, phase: str = ""):
         """Change button appearance. NEVER sets state=disabled."""
         try:
+            self.after(0, lambda a=active, p=phase:
+                       self._set_build_state(a, p))
+        except Exception:
+            self._building = False
+
+    def _set_build_state(self, active: bool, phase: str = ""):
+        try:
             if active:
                 txt = "⏳  BUILDING…" + (f"  {phase}" if phase else "")
                 self.build_btn.configure(
@@ -837,6 +845,11 @@ class PSP2PS4App(ctk.CTk):
                     fg_color=SURFACE_3,
                     text_color=TEXT_DIM)
                 self._building = True
+                self.title(f"PSP 2 PS4 AIO — ⏳ BUILDING · {phase}")
+                _gp = self.pages.get("game")
+                if _gp:
+                    _gp.progress.configure(mode="indeterminate")
+                    _gp.progress.start(12)
                 print(f"[state] building=True phase={phase}", flush=True)
             else:
                 mode = "Game PKG"
@@ -852,6 +865,12 @@ class PSP2PS4App(ctk.CTk):
                     fg_color=ACCENT,
                     text_color=ACCENT_ON)
                 self._building = False
+                self.title("PSP 2 PS4 AIO")
+                _gp = self.pages.get("game")
+                if _gp:
+                    _gp.progress.stop()
+                    _gp.progress.configure(mode="determinate")
+                    _gp.progress.set(getattr(self, "_last_pct", 0) / 100.0)
                 print("[state] building=False", flush=True)
         except Exception as e:
             print(f"[state] ERROR: {e}", flush=True)
@@ -1095,16 +1114,14 @@ class PSP2PS4App(ctk.CTk):
 
             self.set_build_state(True, "extracting base")
             if not ensure_base_extracted(gp.base_pkg_path, self.log):
-                self.set_progress(0, "Failed")
-                return
+                raise RuntimeError("Base extraction failed — see terminal log")
             self.after(0, lambda: gp.set_base_ready(gp.base_pkg_name))
 
             self.set_build_state(True, "reading ISO")
             self.set_progress(35, "Reading ISO param.sfo…")
             disc_id, psp_name = read_iso_sfo(iso, self.log)
             if not disc_id:
-                self.set_progress(0, "Failed")
-                return
+                raise RuntimeError("Could not read param.sfo from the ISO")
             self.detected_disc_id = disc_id
             self.detected_title = psp_name
             self.after(0, self._update_output_preview)
@@ -1147,8 +1164,20 @@ class PSP2PS4App(ctk.CTk):
             final = finish_pkg(out_name, disc_id, psp_name, self.log)
             if final:
                 self.set_progress(100, f"Done — {final.name}")
+                self.msg_main("info", "Success", f"PKG created:\n{final}")
+            else:
+                raise RuntimeError("img_create failed — see terminal log")
         except Exception as e:
-            self.log(f"❌ Exception: {e}")
+                        except Exception as e:
+                self.log(f"❌ Exception: {e}")
+                self.log(traceback.format_exc())
+                self.set_progress(0, "Failed")
+                self.msg_main("error", "Build failed",
+                              f"{e}\n\nSee the terminal log for details.")
+            finally:
+                self.set_build_state(False)
+
+        def _build_emu_thread(self, tid):
             self.log(traceback.format_exc())
             self.set_progress(0, "Failed")
         finally:
@@ -1159,8 +1188,7 @@ class PSP2PS4App(ctk.CTk):
         try:
             self.set_build_state(True, "extracting base")
             if not ensure_base_extracted(gp.base_pkg_path, self.log):
-                self.set_progress(0, "Failed")
-                return
+                raise RuntimeError("Base extraction failed — see terminal log")
             self.after(0, lambda: gp.set_base_ready(gp.base_pkg_name))
 
             self.set_progress(40, "Preparing emulator PKG…")
