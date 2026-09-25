@@ -945,7 +945,7 @@ class PSP2PS4App(ctk.CTk):
         disc = self.detected_disc_id or "<DISC_ID>"
         title = self.detected_title or "<Title>"
         base = gp.base_pkg_name or "<BasePKG>"
-        if gp.mode_var.get() == "Game PKG":
+        if self.mode_var.get() == "Game PKG":
             txt = f"{C.safe_name(title)}_{C.safe_name(disc)}_{base}.pkg"
         else:
             txt = f"{base}_EMU_<TITLE_ID>.pkg"
@@ -954,7 +954,7 @@ class PSP2PS4App(ctk.CTk):
 
     def _on_mode_change(self):
         gp = self.pages["game"]
-        is_game = gp.mode_var.get() == "Game PKG"
+        is_game = self.mode_var.get() == "Game PKG"
         for c in (gp.c3, gp.c4, gp.c5, gp.c6):
             c.grid() if is_game else c.grid_remove()
         self.build_btn.configure(
@@ -1058,7 +1058,7 @@ class PSP2PS4App(ctk.CTk):
           
 
         gp = self.pages["game"]
-        self.log(f"[build] clicked — mode={gp.mode_var.get()} "
+        self.log(f"[build] clicked — mode={self.mode_var.get()} "
                  f"base={gp.base_pkg_path} iso={self.iso_file}")
 
         if gp.base_pkg_path is None:
