@@ -1142,15 +1142,20 @@ class PSP2PS4App(ctk.CTk):
             merge_dlc(game_dir, disc_id, self.log)
 
             m = gp.decrypt_var.get()
-            self.set_build_state(True, "decrypting")
-            self.set_progress(45, "Processing game image…")
             if m == 1:
+                self.set_build_state(True, "decrypting")
+                self.set_progress(45, "Decrypting game image…")
                 if not decrypt_and_mkiso(iso, game_dir, disc_id, self.log):
                     self.log("⚠️ decrypt failed — swap")
+                    self.set_build_state(True, "swapping EBOOT")
                     swap_method(iso, game_dir, disc_id, self.log)
             elif m == 2:
+                self.set_build_state(True, "swapping EBOOT")
+                self.set_progress(45, "Swapping EBOOT…")
                 swap_method(iso, game_dir, disc_id, self.log)
             else:
+                self.set_build_state(True, "copying image")
+                self.set_progress(45, "Copying game image…")
                 skip_copy(iso, game_dir, disc_id, self.log)
 
             self.set_progress(72, "Applying options…")
