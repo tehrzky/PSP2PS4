@@ -746,14 +746,14 @@ class PSP2PS4App(ctk.CTk):
 
     def _build_build_bar(self):
         bar = ctk.CTkFrame(self, fg_color=SURFACE,
-                           corner_radius=0, height=74)     # was 58
+                           corner_radius=0, height=74)
         bar.grid(row=3, column=0, sticky="ew")
         bar.grid_propagate(False)
         bar.grid_columnconfigure(0, weight=1)
 
         out_wrap = ctk.CTkFrame(bar, fg_color="transparent")
         out_wrap.grid(row=0, column=0, sticky="ew",
-                      padx=(16, 10), pady=16)              # was 10
+                      padx=(16, 10), pady=16)
         ctk.CTkLabel(out_wrap, text="OUTPUT", font=F(9, "bold"),
                      text_color=TEXT_FAINT).pack(anchor="w")
         self.output_preview_bar = ctk.CTkLabel(
@@ -764,7 +764,7 @@ class PSP2PS4App(ctk.CTk):
         ghost(bar, "📂  Open output",
               lambda: self.open_folder(C.OUTPUT_DIR),
               width=126, height=38)\
-            .grid(row=0, column=1, padx=(0, 8), pady=18)   # was 10
+            .grid(row=0, column=1, padx=(0, 8), pady=18)
 
         self.build_btn = ctk.CTkButton(
             bar, text="🚀   BUILD PKG", height=38, width=200,
@@ -1074,7 +1074,6 @@ class PSP2PS4App(ctk.CTk):
         if getattr(self, "_building", False):
             self.log("[build] already running, ignoring click")
             return
-          
 
         gp = self.pages["game"]
         self.log(f"[build] clicked — mode={self.mode_var.get()} "
@@ -1168,18 +1167,11 @@ class PSP2PS4App(ctk.CTk):
             else:
                 raise RuntimeError("img_create failed — see terminal log")
         except Exception as e:
-                        except Exception as e:
-                self.log(f"❌ Exception: {e}")
-                self.log(traceback.format_exc())
-                self.set_progress(0, "Failed")
-                self.msg_main("error", "Build failed",
-                              f"{e}\n\nSee the terminal log for details.")
-            finally:
-                self.set_build_state(False)
-
-        def _build_emu_thread(self, tid):
+            self.log(f"❌ Exception: {e}")
             self.log(traceback.format_exc())
             self.set_progress(0, "Failed")
+            self.msg_main("error", "Build failed",
+                          f"{e}\n\nSee the terminal log for details.")
         finally:
             self.set_build_state(False)
 
@@ -1194,9 +1186,7 @@ class PSP2PS4App(ctk.CTk):
             self.set_progress(40, "Preparing emulator PKG…")
             sfo = C.IMAGE0_DIR / "sce_sys" / "param.sfo"
             if not sfo.exists():
-                self.log("❌ param.sfo missing")
-                self.set_progress(0, "Failed")
-                return
+                raise RuntimeError("param.sfo missing — extract a base first")
 
             content_id = f"{tid}-{gp.base_pkg_name}"
             title = f"Emu {gp.base_pkg_name}"
@@ -1204,7 +1194,6 @@ class PSP2PS4App(ctk.CTk):
                          ("CONTENT_ID", content_id),
                          ("TITLE", title)]:
                 C.run_cmd([str(C.SFO), "-e", k, v, str(sfo)])
-            # ... rest unchanged
 
             if gp.use_overrides.get():
                 apply_overrides(self.log)
@@ -1218,10 +1207,13 @@ class PSP2PS4App(ctk.CTk):
                 self.msg_main("info", "Success",
                               f"PKG created:\n{final}")
             else:
-                self.set_progress(0, "Failed")
+                raise RuntimeError("img_create failed — see terminal log")
         except Exception as e:
             self.log(f"❌ Exception: {e}")
+            self.log(traceback.format_exc())
             self.set_progress(0, "Failed")
+            self.msg_main("error", "Build failed",
+                          f"{e}\n\nSee the terminal log for details.")
         finally:
             self.set_build_state(False)
 
